@@ -1,7 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_magic_eraser/image_magic_eraser.dart';
 import 'dart:ui' as ui;
+import 'package:image_picker/image_picker.dart';
 
 class InpaintingPage extends StatefulWidget {
   const InpaintingPage({super.key});
@@ -13,12 +16,14 @@ class InpaintingPage extends StatefulWidget {
 }
 
 class _InpaintingPageState extends State<InpaintingPage> {
-  final String _imagePath = "assets/image.jpg";
-  final String _maskPath = "assets/mask.jpg";
   ui.Image? _outputImage;
   bool _isModelLoaded = false;
   bool _isInpainting = false;
   bool _isLoadingModel = false;
+  static ImagePicker imagePicker = ImagePicker();
+
+  XFile? image;
+  XFile? mask;
 
   // Demo polygons for testing inpainting
   final List<List<Map<String, double>>> _demoPolygons = [
@@ -40,6 +45,34 @@ class _InpaintingPageState extends State<InpaintingPage> {
 
     // Check if model is already loaded
     _isModelLoaded = InpaintingService.instance.isModelLoaded();
+
+    if (!_isModelLoaded) {
+      _loadModel();
+    }
+  }
+
+  Future<void> _loadModel() async {
+    setState(() {
+      _isLoadingModel = true;
+    });
+
+    try {
+      await InpaintingService.instance
+          .initializeOrt('assets/models/lama_fp32.onnx');
+      InpaintingService.instance
+          .setModelInputSize(InputSize(width: 512, height: 512));
+
+      setState(() {
+        _isModelLoaded = true;
+        _isLoadingModel = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isModelLoaded = false;
+        _isLoadingModel = false;
+      });
+      debugPrint('Error loading model: $e');
+    }
   }
 
   @override
@@ -49,165 +82,171 @@ class _InpaintingPageState extends State<InpaintingPage> {
     super.dispose();
   }
 
+  /// Pick image from gallery
+  Future<void> pickImage() async {
+    try {
+      final file = await imagePicker.pickImage(source: ImageSource.gallery);
+      setState(() {
+        image = file;
+      });
+    } on Exception catch (e) {
+      debugPrint('Error picking mask: $e');
+    }
+  }
+
+  /// Pick a mask from the gallery
+  Future<void> pickMask() async {
+    try {
+      final file = await imagePicker.pickImage(source: ImageSource.gallery);
+      setState(() {
+        mask = file;
+      });
+    } on Exception catch (e) {
+      debugPrint('Error picking mask: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Image Inpainting")),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+        child: (_isLoadingModel)
+            ? Column(
                 children: [
-                  Image.asset(_imagePath, width: 400),
-                  Image.asset(_maskPath, width: 400),
-                  if (_isInpainting)
-                    const CircularProgressIndicator()
-                  else if (_outputImage != null)
-                    RawImage(
-                      image: _outputImage,
-                      width: 400,
-                    )
-                  else
-                    Container(),
+                  const Center(child: CircularProgressIndicator()),
+                  const SizedBox(height: 16),
+                  const Text("Loading model..."),
                 ],
-              ),
-              if (!_isModelLoaded)
-                ElevatedButton(
-                    onPressed: _isLoadingModel
-                        ? null
-                        : () async {
-                            setState(() {
-                              _isLoadingModel = true;
-                            });
-
-                            try {
-                              await InpaintingService.instance.initializeOrt(
-                                  'assets/models/lama_fp32.onnx');
-                              InpaintingService.instance.setModelInputSize(
-                                  InputSize(width: 512, height: 512));
-
-                              setState(() {
-                                _isModelLoaded = true;
-                                _isLoadingModel = false;
-                              });
-                            } catch (e) {
-                              setState(() {
-                                _isModelLoaded = false;
-                                _isLoadingModel = false;
-                              });
-                              debugPrint('Error loading model: $e');
-                            }
-                          },
-                    child: _isLoadingModel
-                        ? const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                              SizedBox(width: 8),
-                              Text("Loading model..."),
-                            ],
+              )
+            : SingleChildScrollView(
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        (image == null)
+                            ? ElevatedButton(
+                                onPressed: pickImage,
+                                child: const Text("Pick Image"),
+                              )
+                            : Image.file(File(image!.path), width: 400),
+                        (mask == null)
+                            ? ElevatedButton(
+                                onPressed: pickMask,
+                                child: const Text("Pick Mask"),
+                              )
+                            : Image.file(File(mask!.path), width: 400),
+                        if (_isInpainting)
+                          const CircularProgressIndicator()
+                        else if (_outputImage != null)
+                          RawImage(
+                            image: _outputImage,
+                            width: 400,
                           )
-                        : const Text("Load model")),
-              if (_isModelLoaded) ...[
-                // Original inpainting with mask image
-                ElevatedButton(
-                    onPressed: () async {
-                      if (_isInpainting) return;
-                      setState(() {
-                        _isInpainting = true;
-                      });
+                        else
+                          Container(),
+                      ],
+                    ),
+                    if (image != null && mask != null) ...[
+                      // Original inpainting with mask image
+                      ElevatedButton(
+                        onPressed: () async {
+                          if (_isInpainting) return;
+                          setState(() {
+                            _isInpainting = true;
+                          });
 
-                      final ByteData bytes = await rootBundle.load(_imagePath);
-                      final Uint8List selectedImageBytes =
-                          bytes.buffer.asUint8List();
+                          final ByteData bytes =
+                              await rootBundle.load(image!.path);
+                          final Uint8List selectedImageBytes =
+                              bytes.buffer.asUint8List();
 
-                      final ByteData maskBytes =
-                          await rootBundle.load(_maskPath);
-                      final Uint8List selectedMaskBytes =
-                          maskBytes.buffer.asUint8List();
+                          final ByteData maskBytes =
+                              await rootBundle.load(mask!.path);
+                          final Uint8List selectedMaskBytes =
+                              maskBytes.buffer.asUint8List();
 
-                      try {
-                        final outputImage = await InpaintingService.instance
-                            .inpaint(selectedImageBytes, selectedMaskBytes);
-                        setState(() {
-                          _outputImage = outputImage;
-                          _isInpainting = false;
-                        });
-                      } catch (e) {
-                        setState(() {
-                          _isInpainting = false;
-                        });
-                        debugPrint('Error inpainting: $e');
-                      }
-                    },
-                    child: const Text("Inpaint with Mask")),
-
-                const SizedBox(height: 16),
-
-                // Inpainting with polygons
-                ElevatedButton(
-                    onPressed: () async {
-                      if (_isInpainting) return;
-                      setState(() {
-                        _isInpainting = true;
-                      });
-
-                      final ByteData bytes = await rootBundle.load(_imagePath);
-                      final Uint8List selectedImageBytes =
-                          bytes.buffer.asUint8List();
-
-                      try {
-                        final outputImage = await InpaintingService.instance
-                            .inpaintWithPolygons(
-                          selectedImageBytes,
-                          _demoPolygons,
-                        );
-                        setState(() {
-                          _outputImage = outputImage;
-                          _isInpainting = false;
-                        });
-                      } catch (e) {
-                        setState(() {
-                          _isInpainting = false;
-                        });
-                        debugPrint('Error inpainting with polygons: $e');
-                      }
-                    },
-                    child: const Text("Inpaint with Polygons")),
-              ],
-
-              // Add the debug mask image display
-              if (_debugMaskImage != null)
-                Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Image.asset(_imagePath),
-                      _debugMaskImage!,
+                          try {
+                            final outputImage = await InpaintingService.instance
+                                .inpaint(selectedImageBytes, selectedMaskBytes);
+                            setState(() {
+                              _outputImage = outputImage;
+                              _isInpainting = false;
+                            });
+                          } catch (e) {
+                            setState(() {
+                              _isInpainting = false;
+                            });
+                            debugPrint('Error inpainting: $e');
+                          }
+                        },
+                        child: const Text("Inpaint with Mask"),
+                      ),
                     ],
-                  ),
-                ),
+                    if (image != null) ...[
+                      // Add button for visualizing mask
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: ElevatedButton(
+                          onPressed: () => _visualizeMask(),
+                          child: const Text('Visualize Polygons Mask'),
+                        ),
+                      ),
 
-              // Add button for visualizing mask
-              Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: ElevatedButton(
-                  onPressed: () => _visualizeMask(),
-                  child: const Text('Visualize Mask'),
+                      // Inpainting with polygons
+                      ElevatedButton(
+                        onPressed: () async {
+                          if (_isInpainting) return;
+                          setState(() {
+                            _isInpainting = true;
+                          });
+
+                          final ByteData bytes =
+                              await rootBundle.load(image!.path);
+                          final Uint8List selectedImageBytes =
+                              bytes.buffer.asUint8List();
+
+                          try {
+                            final outputImage = await InpaintingService.instance
+                                .inpaintWithPolygons(
+                              selectedImageBytes,
+                              _demoPolygons,
+                            );
+                            setState(() {
+                              _outputImage = outputImage;
+                              _isInpainting = false;
+                            });
+                          } catch (e) {
+                            setState(() {
+                              _isInpainting = false;
+                            });
+                            debugPrint('Error inpainting with polygons: $e');
+                          }
+                        },
+                        child: const Text("Inpaint with Polygons"),
+                      ),
+
+                      // Add the debug mask image display
+                      if (_debugMaskImage != null)
+                        Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Image.asset(
+                                image!.path,
+                                width: 400,
+                              ),
+                              _debugMaskImage!,
+                            ],
+                          ),
+                        ),
+                    ],
+                  ],
                 ),
               ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -216,7 +255,7 @@ class _InpaintingPageState extends State<InpaintingPage> {
   Future<void> _visualizeMask() async {
     try {
       // Load image bytes using rootBundle
-      final ByteData bytes = await rootBundle.load(_imagePath);
+      final ByteData bytes = await rootBundle.load(image!.path);
       final Uint8List selectedImageBytes = bytes.buffer.asUint8List();
 
       final debugMask = await InpaintingService.instance.generateDebugMask(
