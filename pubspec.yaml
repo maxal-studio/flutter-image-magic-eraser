@@ -1,11 +1,19 @@
 name: image_magic_eraser
-description: "A new Flutter package project."
+description: "Remove objects from images using machine learning (LaMa Model)"
 version: 0.0.1
-homepage:
+homepage: https://github.com/maxal-studio/flutter-image-magic-eraser
 
 environment:
   sdk: ^3.6.1
   flutter: ">=1.17.0"
+
+topics:
+  - image-processing
+  - machine-learning
+  - onnx
+  - LaMa
+  - inpainting
+  - image-to-image
 
 dependencies:
   flutter:

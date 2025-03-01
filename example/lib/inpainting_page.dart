@@ -59,8 +59,6 @@ class _InpaintingPageState extends State<InpaintingPage> {
     try {
       await InpaintingService.instance
           .initializeOrt('assets/models/lama_fp32.onnx');
-      InpaintingService.instance
-          .setModelInputSize(InputSize(width: 512, height: 512));
 
       setState(() {
         _isModelLoaded = true;
