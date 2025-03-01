@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
+import 'mappers/input_size.dart';
+export 'mappers/input_size.dart';
+
 class InpaintingService {
   InpaintingService._internal();
 
@@ -17,33 +20,32 @@ class InpaintingService {
   // The ONNX session used for inference.
   OrtSession? _session;
 
-  static const String _modelPath = 'assets/models/lama_fp32.onnx';
   // LaMa model expects 512x512 input images
-  static const int _modelInputSize = 512;
+  static InputSize _modelInputSize = InputSize(width: 512, height: 512);
 
   /// Initializes the ONNX environment and creates a session.
   ///
   /// This method should be called once before using the [removeBg] method.
-  Future<void> initializeOrt() async {
+  Future<void> initializeOrt(String modelPath) async {
     try {
       /// Initialize the ONNX runtime environment.
       OrtEnv.instance.init();
 
       /// Create the ONNX session.
-      await _createSession();
+      await _createSession(modelPath);
     } catch (e) {
       rethrow;
     }
   }
 
   /// Creates an ONNX session using the model from assets.
-  Future<void> _createSession() async {
+  Future<void> _createSession(String modelPath) async {
     try {
       /// Session configuration options.
       final sessionOptions = OrtSessionOptions();
 
       /// Load the model as a raw asset.
-      final rawAssetFile = await rootBundle.load(_modelPath);
+      final rawAssetFile = await rootBundle.load(modelPath);
 
       /// Convert the asset to a byte array.
       final bytes = rawAssetFile.buffer.asUint8List();
@@ -56,6 +58,11 @@ class InpaintingService {
     } catch (e) {
       throw Exception('Error creating ONNX session: $e');
     }
+  }
+
+  /// Set model input size
+  void setModelInputSize(InputSize size) {
+    _modelInputSize = size;
   }
 
   /// Removes the background from an image.
@@ -83,14 +90,14 @@ class InpaintingService {
       /// Decode the input image and resize it to the required dimensions.
       final originalImage = await decodeImageFromList(imageBytes);
       log('Original image size: ${originalImage.width}x${originalImage.height}');
-      final resizedImage =
-          await _resizeImage(originalImage, _modelInputSize, _modelInputSize);
+      final resizedImage = await _resizeImage(
+          originalImage, _modelInputSize.width, _modelInputSize.height);
 
       /// Decode the mask image and resize it to the required dimensions.
       final originalMask = await decodeImageFromList(maskBytes);
       log('Original mask size: ${originalMask.width}x${originalMask.height}');
-      final resizedMask =
-          await _resizeImage(originalMask, _modelInputSize, _modelInputSize);
+      final resizedMask = await _resizeImage(
+          originalMask, _modelInputSize.width, _modelInputSize.height);
 
       /// Convert mask to grayscale if it's not already
       final grayscaleMask = await _convertToGrayscale(resizedMask);
@@ -100,14 +107,14 @@ class InpaintingService {
       final rgbFloats = await _imageToFloatTensor(resizedImage);
       final imageTensor = OrtValueTensor.createTensorWithDataList(
         Float32List.fromList(rgbFloats),
-        [1, 3, _modelInputSize, _modelInputSize],
+        [1, 3, _modelInputSize.width, _modelInputSize.height],
       );
 
       /// Convert the grayscale mask into a tensor format required by the ONNX model.
       final maskFloats = await _maskToFloatTensor(grayscaleMask);
       final maskTensor = OrtValueTensor.createTensorWithDataList(
         Float32List.fromList(maskFloats),
-        [1, 1, _modelInputSize, _modelInputSize],
+        [1, 1, _modelInputSize.width, _modelInputSize.height],
       );
 
       /// Prepare the inputs and run inference on the ONNX model.
