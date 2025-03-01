@@ -19,12 +19,23 @@ class _InpaintingPageState extends State<InpaintingPage> {
   ui.Image? _outputImage;
   bool _isModelLoaded = false;
   bool _isInpainting = false;
+  bool _isLoadingModel = false;
 
   @override
   void initState() {
     _selectedImage = File("assets/image.jpg");
     _selectedMask = File("assets/mask.jpg");
     super.initState();
+
+    // Check if model is already loaded
+    _isModelLoaded = InpaintingService.instance.isModelLoaded();
+  }
+
+  @override
+  void dispose() {
+    // No need to dispose of the service here as it's a singleton
+    // and might be used elsewhere in the app
+    super.dispose();
   }
 
   @override
@@ -58,24 +69,46 @@ class _InpaintingPageState extends State<InpaintingPage> {
               ),
               if (!_isModelLoaded)
                 ElevatedButton(
-                    onPressed: () async {
-                      try {
-                        await InpaintingService.instance
-                            .initializeOrt('assets/models/lama_fp32.onnx');
-                        InpaintingService.instance.setModelInputSize(
-                            InputSize(width: 512, height: 512));
+                    onPressed: _isLoadingModel
+                        ? null
+                        : () async {
+                            setState(() {
+                              _isLoadingModel = true;
+                            });
 
-                        setState(() {
-                          _isModelLoaded = true;
-                        });
-                      } catch (e) {
-                        setState(() {
-                          _isModelLoaded = false;
-                        });
-                        debugPrint('Error loading model: $e');
-                      }
-                    },
-                    child: const Text("Load model")),
+                            try {
+                              await InpaintingService.instance.initializeOrt(
+                                  'assets/models/lama_fp32.onnx');
+                              InpaintingService.instance.setModelInputSize(
+                                  InputSize(width: 512, height: 512));
+
+                              setState(() {
+                                _isModelLoaded = true;
+                                _isLoadingModel = false;
+                              });
+                            } catch (e) {
+                              setState(() {
+                                _isModelLoaded = false;
+                                _isLoadingModel = false;
+                              });
+                              debugPrint('Error loading model: $e');
+                            }
+                          },
+                    child: _isLoadingModel
+                        ? const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              SizedBox(width: 8),
+                              Text("Loading model..."),
+                            ],
+                          )
+                        : const Text("Load model")),
               if (_isModelLoaded)
                 ElevatedButton(
                     onPressed: () async {

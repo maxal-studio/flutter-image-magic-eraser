@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
 import 'mappers/input_size.dart';
+import 'mappers/model_init_data.dart';
 export 'mappers/input_size.dart';
 
 class InpaintingService {
@@ -26,37 +27,54 @@ class InpaintingService {
   /// Initializes the ONNX environment and creates a session.
   ///
   /// This method should be called once before using the [removeBg] method.
+  /// It runs in an isolate to prevent UI freezing.
   Future<void> initializeOrt(String modelPath) async {
     try {
-      /// Initialize the ONNX runtime environment.
+      // Load the model bytes in the main isolate
+      final rawAssetFile = await rootBundle.load(modelPath);
+      final bytes = rawAssetFile.buffer.asUint8List();
+
+      // Initialize the ONNX runtime environment in the main isolate
+      // This is required before creating a session
       OrtEnv.instance.init();
 
-      /// Create the ONNX session.
-      await _createSession(modelPath);
+      // Create the session in a separate isolate
+      final session =
+          await compute(_createSession, ModelInitData(modelPath, bytes));
+
+      // The session will not be null as the _createSession method will throw an exception if it fails
+      _session = session;
+
+      if (kDebugMode) {
+        log('ONNX session created successfully in isolate.',
+            name: "InpaintingService");
+      }
     } catch (e) {
+      if (kDebugMode) {
+        log('Error initializing ORT: $e', name: "InpaintingService", error: e);
+      }
       rethrow;
     }
   }
 
-  /// Creates an ONNX session using the model from assets.
-  Future<void> _createSession(String modelPath) async {
+  /// Static method to create an ONNX session in an isolate
+  static Future<OrtSession> _createSession(ModelInitData data) async {
     try {
-      /// Session configuration options.
+      // Initialize ORT environment in the isolate
+      OrtEnv.instance.init();
+
+      // Create session options
       final sessionOptions = OrtSessionOptions();
 
-      /// Load the model as a raw asset.
-      final rawAssetFile = await rootBundle.load(modelPath);
+      // Create the session from the model bytes
+      final session = OrtSession.fromBuffer(data.modelBytes, sessionOptions);
 
-      /// Convert the asset to a byte array.
-      final bytes = rawAssetFile.buffer.asUint8List();
-
-      /// Create the ONNX session.
-      _session = OrtSession.fromBuffer(bytes, sessionOptions);
-      if (kDebugMode) {
-        log('ONNX session created successfully.', name: "InpaintingService");
-      }
+      return session;
     } catch (e) {
-      throw Exception('Error creating ONNX session: $e');
+      if (kDebugMode) {
+        log('Error creating ONNX session in isolate: $e');
+      }
+      throw Exception('Error creating ONNX session in isolate: $e');
     }
   }
 
@@ -65,18 +83,35 @@ class InpaintingService {
     _modelInputSize = size;
   }
 
-  /// Removes the background from an image.
+  /// Check if the model is already loaded
+  bool isModelLoaded() {
+    return _session != null;
+  }
+
+  /// Dispose of resources when the service is no longer needed
+  void dispose() {
+    if (_session != null) {
+      _session!.release();
+      _session = null;
+      if (kDebugMode) {
+        log('ONNX session released.', name: "InpaintingService");
+      }
+    }
+  }
+
+  /// Inpaints   the masked object from an image.
   ///
-  /// This function processes the input image and removes its background,
-  /// returning a new image with the background removed.
+  /// This function processes the input image and inpaints the masked object,
+  /// returning a new image with the masked object inpainted.
   ///
   /// - [imageBytes]: The input image as a byte array.
-  /// - Returns: A [ui.Image] with the background removed.
+  /// - [maskBytes]: The mask image as a byte array.
+  /// - Returns: A [ui.Image] with the masked object inpainted.
   ///
   /// Example usage:
   /// ```dart
   /// final imageBytes = await File('path_to_image').readAsBytes();
-  /// final ui.Image imageWithoutBackground = await removeBackground(imageBytes);
+  /// final ui.Image imageWithoutMaskedObject = await inpaint(imageBytes, maskBytes);
   /// ```
   ///
   /// Note: This function may take some time to process depending on the size
