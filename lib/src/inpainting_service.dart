@@ -4,13 +4,16 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
 import 'mappers/input_size.dart';
-import 'mappers/model_init_data.dart';
+import 'services/image_processing_service.dart';
+import 'services/mask_generation_service.dart';
+import 'services/onnx_model_service.dart';
+
 export 'mappers/input_size.dart';
 
+/// Main service for image inpainting
 class InpaintingService {
   InpaintingService._internal();
 
@@ -18,63 +21,27 @@ class InpaintingService {
 
   static InpaintingService get instance => _instance;
 
-  // The ONNX session used for inference.
-  OrtSession? _session;
-
-  // LaMa model expects 512x512 input images
-  static InputSize _modelInputSize = InputSize(width: 512, height: 512);
+  // LaMa model expects 512x512 input images by default
+  InputSize _modelInputSize = InputSize(width: 512, height: 512);
 
   /// Initializes the ONNX environment and creates a session.
   ///
-  /// This method should be called once before using the [removeBg] method.
+  /// This method should be called once before using the inpaint methods.
   /// It runs in an isolate to prevent UI freezing.
   Future<void> initializeOrt(String modelPath) async {
     try {
-      // Load the model bytes in the main isolate
-      final rawAssetFile = await rootBundle.load(modelPath);
-      final bytes = rawAssetFile.buffer.asUint8List();
-
-      // Initialize the ONNX runtime environment in the main isolate
-      // This is required before creating a session
-      OrtEnv.instance.init();
-
-      // Create the session in a separate isolate
-      final session =
-          await compute(_createSession, ModelInitData(modelPath, bytes));
-
-      // The session will not be null as the _createSession method will throw an exception if it fails
-      _session = session;
+      await OnnxModelService.instance.initializeModel(modelPath);
 
       if (kDebugMode) {
-        log('ONNX session created successfully in isolate.',
+        log('Inpainting service initialized successfully.',
             name: "InpaintingService");
       }
     } catch (e) {
       if (kDebugMode) {
-        log('Error initializing ORT: $e', name: "InpaintingService", error: e);
+        log('Error initializing inpainting service: $e',
+            name: "InpaintingService", error: e);
       }
       rethrow;
-    }
-  }
-
-  /// Static method to create an ONNX session in an isolate
-  static Future<OrtSession> _createSession(ModelInitData data) async {
-    try {
-      // Initialize ORT environment in the isolate
-      OrtEnv.instance.init();
-
-      // Create session options
-      final sessionOptions = OrtSessionOptions();
-
-      // Create the session from the model bytes
-      final session = OrtSession.fromBuffer(data.modelBytes, sessionOptions);
-
-      return session;
-    } catch (e) {
-      if (kDebugMode) {
-        log('Error creating ONNX session in isolate: $e');
-      }
-      throw Exception('Error creating ONNX session in isolate: $e');
     }
   }
 
@@ -85,315 +52,221 @@ class InpaintingService {
 
   /// Check if the model is already loaded
   bool isModelLoaded() {
-    return _session != null;
+    return OnnxModelService.instance.isModelLoaded();
   }
 
   /// Dispose of resources when the service is no longer needed
   void dispose() {
-    if (_session != null) {
-      _session!.release();
-      _session = null;
-      if (kDebugMode) {
-        log('ONNX session released.', name: "InpaintingService");
-      }
+    OnnxModelService.instance.dispose();
+    if (kDebugMode) {
+      log('Inpainting service disposed.', name: "InpaintingService");
     }
   }
 
-  /// Inpaints   the masked object from an image.
+  /// Inpaints the masked areas of an image using polygons defined by points.
   ///
-  /// This function processes the input image and inpaints the masked object,
-  /// returning a new image with the masked object inpainted.
+  /// This function processes the input image and inpaints the areas defined by the polygons,
+  /// returning a new image with the masked areas inpainted.
   ///
   /// - [imageBytes]: The input image as a byte array.
-  /// - [maskBytes]: The mask image as a byte array.
-  /// - Returns: A [ui.Image] with the masked object inpainted.
+  /// - [polygons]: A list of lists, each inner list containing at least 3 points as maps with 'x' and 'y' keys.
+  /// - [strokeWidth]: The width of the strokes for outlines if needed (default: 5.0).
+  /// - Returns: A [ui.Image] with the masked areas inpainted.
   ///
   /// Example usage:
   /// ```dart
   /// final imageBytes = await File('path_to_image').readAsBytes();
-  /// final ui.Image imageWithoutMaskedObject = await inpaint(imageBytes, maskBytes);
+  /// final polygons = [
+  ///   [
+  ///     {'x': 100.0, 'y': 100.0},
+  ///     {'x': 300.0, 'y': 100.0},
+  ///     {'x': 200.0, 'y': 300.0},
+  ///   ],
+  /// ];
+  /// final inpaintedImage = await inpaintWithPolygons(imageBytes, polygons);
   /// ```
-  ///
-  /// Note: This function may take some time to process depending on the size
-  /// and complexity of the input image.
-  Future<ui.Image> inpaint(Uint8List imageBytes, Uint8List maskBytes) async {
-    if (_session == null) {
-      throw Exception("ONNX session not initialized");
+  Future<ui.Image> inpaintWithPolygons(
+    Uint8List imageBytes,
+    List<List<Map<String, double>>> polygons,
+  ) async {
+    if (!isModelLoaded()) {
+      throw Exception("ONNX model not initialized. Call initializeOrt first.");
     }
 
     try {
-      /// Decode the input image and resize it to the required dimensions.
+      // Decode the input image
       final originalImage = await decodeImageFromList(imageBytes);
-      log('Original image size: ${originalImage.width}x${originalImage.height}');
-      final resizedImage = await _resizeImage(
+      if (kDebugMode) {
+        log('Original image size: ${originalImage.width}x${originalImage.height}',
+            name: 'InpaintingService');
+      }
+
+      // Generate mask image from polygons
+      final maskImage = await MaskGenerationService.instance
+          .generateMask(polygons, originalImage.width, originalImage.height);
+
+      // Convert mask to bytes
+      final maskBytes =
+          await MaskGenerationService.instance.maskImageToBytes(maskImage);
+
+      // Inpaint using the generated mask
+      return await inpaint(imageBytes, maskBytes);
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error inpainting with polygons: $e',
+            name: "InpaintingService", error: e);
+      }
+      rethrow;
+    }
+  }
+
+  /// Inpaints the masked areas of an image.
+  ///
+  /// This function processes the input image and inpaints the areas defined by the mask,
+  /// returning a new image with the masked areas inpainted.
+  ///
+  /// - [imageBytes]: The input image as a byte array.
+  /// - [maskBytes]: The mask image as a byte array.
+  /// - Returns: A [ui.Image] with the masked areas inpainted.
+  ///
+  /// Example usage:
+  /// ```dart
+  /// final imageBytes = await File('path_to_image').readAsBytes();
+  /// final maskBytes = await File('path_to_mask').readAsBytes();
+  /// final inpaintedImage = await inpaint(imageBytes, maskBytes);
+  /// ```
+  Future<ui.Image> inpaint(Uint8List imageBytes, Uint8List maskBytes,
+      {bool debug = false}) async {
+    if (!isModelLoaded()) {
+      throw Exception("ONNX model not initialized. Call initializeOrt first.");
+    }
+
+    try {
+      // Decode the input image and resize it to the required dimensions
+      final originalImage = await decodeImageFromList(imageBytes);
+      if (kDebugMode) {
+        log('Original image size: ${originalImage.width}x${originalImage.height}',
+            name: 'InpaintingService');
+      }
+
+      final resizedImage = await ImageProcessingService.instance.resizeImage(
           originalImage, _modelInputSize.width, _modelInputSize.height);
 
-      /// Decode the mask image and resize it to the required dimensions.
+      // Decode the mask image and resize it to the required dimensions
       final originalMask = await decodeImageFromList(maskBytes);
-      log('Original mask size: ${originalMask.width}x${originalMask.height}');
-      final resizedMask = await _resizeImage(
+      if (kDebugMode) {
+        log('Original mask size: ${originalMask.width}x${originalMask.height}',
+            name: 'InpaintingService');
+      }
+
+      final resizedMask = await ImageProcessingService.instance.resizeImage(
           originalMask, _modelInputSize.width, _modelInputSize.height);
 
-      /// Convert mask to grayscale if it's not already
-      final grayscaleMask = await _convertToGrayscale(resizedMask);
-      log('Converted mask to grayscale', name: 'InpaintingService');
+      // Convert mask to grayscale if it's not already
+      final grayscaleMask =
+          await ImageProcessingService.instance.convertToGrayscale(
+        resizedMask,
+        blackNWhite: true,
+        threshold: 50,
+      );
 
-      /// Convert the resized image into a tensor format required by the ONNX model.
-      final rgbFloats = await _imageToFloatTensor(resizedImage);
+      if (kDebugMode) {
+        log('Converted mask to grayscale', name: 'InpaintingService');
+      }
+
+      // Convert the resized image into a tensor format required by the ONNX model
+      final rgbFloats = await ImageProcessingService.instance
+          .imageToFloatTensor(resizedImage);
       final imageTensor = OrtValueTensor.createTensorWithDataList(
         Float32List.fromList(rgbFloats),
         [1, 3, _modelInputSize.width, _modelInputSize.height],
       );
 
-      /// Convert the grayscale mask into a tensor format required by the ONNX model.
-      final maskFloats = await _maskToFloatTensor(grayscaleMask);
+      // Convert the grayscale mask into a tensor format required by the ONNX model
+      final maskFloats = await ImageProcessingService.instance
+          .maskToFloatTensor(grayscaleMask);
       final maskTensor = OrtValueTensor.createTensorWithDataList(
         Float32List.fromList(maskFloats),
         [1, 1, _modelInputSize.width, _modelInputSize.height],
       );
 
-      /// Prepare the inputs and run inference on the ONNX model.
+      // Prepare the inputs and run inference on the ONNX model
       final inputs = {
         'image': imageTensor,
         'mask': maskTensor,
       };
-      final runOptions = OrtRunOptions();
-      final outputs = await _session!.runAsync(runOptions, inputs);
+
+      final outputs = await OnnxModelService.instance.runInference(inputs);
+
+      // Release tensors
       imageTensor.release();
       maskTensor.release();
-      runOptions.release();
 
-      /// Process the output tensor and generate the final image with the background removed.
+      // Process the output tensor and generate the final image
       final outputTensor = outputs?[0]?.value;
       if (outputTensor is List) {
         final output = outputTensor[0]; // This should be RGB channels
-        log('Output tensor shape: ${output.length} channels',
-            name: 'InpaintingService');
+        if (kDebugMode) {
+          log('Output tensor shape: ${output.length} channels',
+              name: 'InpaintingService');
+          log('Processing RGB output from LaMa model',
+              name: 'InpaintingService');
+        }
 
-        log('Processing RGB output from LaMa model', name: 'InpaintingService');
-        final resizedOutput =
-            resizeRGBOutput(output, originalImage.width, originalImage.height);
-        final inpaintedImage = await _rgbTensorToUIImage(resizedOutput);
+        final resizedOutput = ImageProcessingService.instance
+            .resizeRGBOutput(output, originalImage.width, originalImage.height);
+
+        final inpaintedImage = await ImageProcessingService.instance
+            .rgbTensorToUIImage(resizedOutput);
         return inpaintedImage;
       } else {
-        throw Exception(
-          'Unexpected output format from ONNX model.',
-        );
+        throw Exception('Unexpected output format from ONNX model.');
       }
     } catch (e) {
+      if (kDebugMode) {
+        log('Error inpainting image: $e', name: "InpaintingService", error: e);
+      }
       throw Exception('Error inpainting image: $e');
     }
   }
 
-  /// Converts an image to grayscale
-  Future<ui.Image> _convertToGrayscale(
-    ui.Image image, {
-    bool blackNWhite = true,
-    int threshold = 50,
+  /// Generates a debug mask image for visualization
+  ///
+  /// This method generates a mask image and returns it as a Flutter Image widget
+  /// for debugging purposes.
+  ///
+  /// [image] is the original image to get dimensions from
+  /// [polygons] is a list of polygons, each containing a list of points
+  ///
+  /// Example usage:
+  /// ```dart
+  /// final polygons = [
+  ///   [
+  ///     {'x': 100, 'y': 100},
+  ///     {'x': 200, 'y': 100},
+  ///     {'x': 150, 'y': 200},
+  ///   ],
+  /// ];
+  /// final debugMask = await inpaintingService.generateDebugMask(image, polygons);
+  /// ```
+  Future<Image> generateDebugMask(
+    Uint8List image,
+    List<List<Map<String, double>>> polygons, {
+    double strokeWidth = 0,
+    Color backgroundColor = Colors.black,
+    Color fillColor = Colors.white,
+    bool drawOutline = false,
   }) async {
-    final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-    if (byteData == null) throw Exception("Failed to get image ByteData");
+    final decodedImage = await decodeImageFromList(image);
 
-    final rgbaBytes = byteData.buffer.asUint8List();
-    final pixelCount = image.width * image.height;
-    final grayBytes = Uint8List(
-        pixelCount * 4); // Still RGBA format but with grayscale values
-
-    for (int i = 0; i < pixelCount; i++) {
-      // Convert RGB to grayscale using standard luminance formula
-      final r = rgbaBytes[i * 4];
-      final g = rgbaBytes[i * 4 + 1];
-      final b = rgbaBytes[i * 4 + 2];
-      final gray = (0.299 * r + 0.587 * g + 0.114 * b).round().clamp(0, 255);
-
-      // If blackNWhite is true, convert all non-black/white colors to white
-      int finalGray = gray;
-      if (blackNWhite) {
-        // Consider pixels as black if they're very dark (below threshold)
-        // Otherwise convert to white
-        finalGray = gray < threshold ? 0 : 255;
-      } else {
-        finalGray = gray;
-      }
-
-      // Set all RGB channels to the same grayscale value
-      grayBytes[i * 4] = finalGray; // R
-      grayBytes[i * 4 + 1] = finalGray; // G
-      grayBytes[i * 4 + 2] = finalGray; // B
-      grayBytes[i * 4 + 3] = rgbaBytes[i * 4 + 3]; // Keep original alpha
-    }
-
-    final completer = Completer<ui.Image>();
-    ui.decodeImageFromPixels(
-        grayBytes, image.width, image.height, ui.PixelFormat.rgba8888,
-        (ui.Image img) {
-      completer.complete(img);
-    });
-
-    return completer.future;
-  }
-
-  /// Converts a mask image into a floating-point tensor.
-  /// This is specifically for single-channel mask input.
-  Future<List<double>> _maskToFloatTensor(ui.Image maskImage) async {
-    final byteData =
-        await maskImage.toByteData(format: ui.ImageByteFormat.rawRgba);
-    if (byteData == null) throw Exception("Failed to get mask ByteData");
-
-    final rgbaBytes = byteData.buffer.asUint8List();
-    final pixelCount = maskImage.width * maskImage.height;
-    final floats = List<double>.filled(pixelCount, 0);
-
-    // For mask, we only need one channel (using red channel as grayscale value)
-    for (int i = 0; i < pixelCount; i++) {
-      floats[i] = rgbaBytes[i * 4] / 255.0; // Use red channel as the mask value
-    }
-
-    return floats;
-  }
-
-  /// Converts an image into a floating-point tensor.
-  Future<List<double>> _imageToFloatTensor(ui.Image image) async {
-    final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-    if (byteData == null) throw Exception("Failed to get image ByteData");
-    final rgbaBytes = byteData.buffer.asUint8List();
-    final pixelCount = image.width * image.height;
-    final floats = List<double>.filled(pixelCount * 3, 0);
-
-    /// Extract and normalize RGB channels.
-    for (int i = 0; i < pixelCount; i++) {
-      floats[i] = rgbaBytes[i * 4] / 255.0; // Red
-      floats[pixelCount + i] = rgbaBytes[i * 4 + 1] / 255.0; // Green
-      floats[2 * pixelCount + i] = rgbaBytes[i * 4 + 2] / 255.0; // Blue
-    }
-    return floats;
-  }
-
-  /// Resizes the mask to match the original image dimensions.
-  List resizeOutput(List output, int originalWidth, int originalHeight) {
-    // Get the actual dimensions of the model output
-    final outputHeight = output.length;
-    final outputWidth = output[0].length;
-
-    log('Model output dimensions: ${outputWidth}x$outputHeight',
-        name: 'ResizeOutput');
-    log('Target dimensions: ${originalWidth}x$originalHeight',
-        name: 'ResizeOutput');
-
-    final resizedOutput = List.generate(
-      originalHeight,
-      (_) => List.filled(originalWidth, 0.0),
+    return MaskGenerationService.instance.generateDebugMask(
+      polygons,
+      decodedImage.width,
+      decodedImage.height,
+      strokeWidth: strokeWidth,
+      backgroundColor: backgroundColor,
+      fillColor: fillColor,
+      drawOutline: drawOutline,
     );
-
-    for (int y = 0; y < originalHeight; y++) {
-      for (int x = 0; x < originalWidth; x++) {
-        // Scale coordinates based on actual output dimensions
-        final scaledX = (x * outputWidth / originalWidth).floor();
-        final scaledY = (y * outputHeight / originalHeight).floor();
-
-        // Ensure we don't go out of bounds
-        final safeX = scaledX.clamp(0, outputWidth - 1);
-        final safeY = scaledY.clamp(0, outputHeight - 1);
-
-        resizedOutput[y][x] = output[safeY][safeX];
-      }
-    }
-    return resizedOutput;
-  }
-
-  /// Converts an RGB tensor output to a UI image without any manipulations
-  Future<ui.Image> _rgbTensorToUIImage(
-      List<List<List<double>>> rgbOutput) async {
-    // Get dimensions from the tensor
-    final height = rgbOutput[0].length;
-    final width = rgbOutput[0][0].length;
-
-    log('Converting tensor with dimensions: ${rgbOutput.length}x${height}x$width',
-        name: 'RGBTensorToUIImage');
-
-    // Create the output RGBA bytes
-    final outputRgbaBytes = Uint8List(width * height * 4);
-
-    // Process each pixel - direct conversion without any manipulations
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        final i = (y * width + x) * 4;
-
-        // Get RGB values directly from the tensor
-        // Assuming values are in [0,255] range - if not, they'll be clamped
-        outputRgbaBytes[i] = rgbOutput[0][y][x].round().clamp(0, 255); // R
-        outputRgbaBytes[i + 1] = rgbOutput[1][y][x].round().clamp(0, 255); // G
-        outputRgbaBytes[i + 2] = rgbOutput[2][y][x].round().clamp(0, 255); // B
-        outputRgbaBytes[i + 3] = 255; // Alpha (fully opaque)
-      }
-    }
-
-    // Create a ui.Image from the RGBA bytes
-    final completer = Completer<ui.Image>();
-    ui.decodeImageFromPixels(
-        outputRgbaBytes, width, height, ui.PixelFormat.rgba8888,
-        (ui.Image img) {
-      completer.complete(img);
-    });
-
-    return completer.future;
-  }
-
-  /// Resizes the RGB output to match the original image dimensions.
-  List<List<List<double>>> resizeRGBOutput(
-      List output, int originalWidth, int originalHeight) {
-    // Get the actual dimensions of the model output
-    final channels = output.length;
-    final outputHeight = output[0].length;
-    final outputWidth = output[0][0].length;
-
-    log('RGB Model output dimensions: ${channels}x${outputHeight}x$outputWidth',
-        name: 'ResizeRGBOutput');
-    log('Target dimensions: ${originalWidth}x$originalHeight',
-        name: 'ResizeRGBOutput');
-
-    // Create a 3D list for RGB channels
-    final resizedOutput = List.generate(
-      channels,
-      (_) => List.generate(
-        originalHeight,
-        (_) => List.filled(originalWidth, 0.0),
-      ),
-    );
-
-    // Resize each channel
-    for (int c = 0; c < channels; c++) {
-      for (int y = 0; y < originalHeight; y++) {
-        for (int x = 0; x < originalWidth; x++) {
-          // Scale coordinates based on actual output dimensions
-          final scaledX = (x * outputWidth / originalWidth).floor();
-          final scaledY = (y * outputHeight / originalHeight).floor();
-
-          // Ensure we don't go out of bounds
-          final safeX = scaledX.clamp(0, outputWidth - 1);
-          final safeY = scaledY.clamp(0, outputHeight - 1);
-
-          resizedOutput[c][y][x] = output[c][safeY][safeX];
-        }
-      }
-    }
-    return resizedOutput;
-  }
-
-  /// Resizes the input image to the specified dimensions.
-  Future<ui.Image> _resizeImage(
-      ui.Image image, int targetWidth, int targetHeight) async {
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    final paint = Paint();
-
-    final srcRect =
-        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
-    final dstRect =
-        Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble());
-    canvas.drawImageRect(image, srcRect, dstRect, paint);
-
-    final picture = recorder.endRecording();
-    return picture.toImage(targetWidth, targetHeight);
   }
 }
