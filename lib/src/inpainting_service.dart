@@ -45,6 +45,9 @@ class InpaintingService {
     }
   }
 
+  /// Get model input size
+  InputSize get modelInputSize => _modelInputSize;
+
   /// Set model input size
   void setModelInputSize(InputSize size) {
     _modelInputSize = size;
