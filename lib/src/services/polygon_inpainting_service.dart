@@ -191,30 +191,33 @@ class PolygonInpaintingService {
     }
   }
 
-  /// Safely resizes an image to the specified dimensions
+  /// Efficiently resizes an image to the specified dimensions
   Future<ui.Image> _safeResizeImage(
     ui.Image image,
     int targetWidth,
     int targetHeight,
   ) async {
     try {
-      // First convert the image to bytes
-      final byteData =
-          await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-      if (byteData == null) {
-        throw Exception('Failed to convert image to bytes');
+      // Skip resizing if dimensions already match
+      if (image.width == targetWidth && image.height == targetHeight) {
+        return image;
       }
 
       // Create a picture recorder
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
 
+      // Use a high-quality paint object for better results
+      final paint = Paint()
+        ..filterQuality = FilterQuality.high
+        ..isAntiAlias = true;
+
       // Draw the image scaled to the target size
       canvas.drawImageRect(
         image,
         Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
         Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble()),
-        Paint()..filterQuality = FilterQuality.medium,
+        paint,
       );
 
       // Convert to an image
