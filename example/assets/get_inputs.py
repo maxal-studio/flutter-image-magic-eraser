@@ -1,8 +1,6 @@
 # Create environment
-# magic_env is the env name
-# magic_env is the directory name
 
-# python3 -m magic_env magic_env
+# python3 -m venv magic_env
 
 # source magic_env/bin/activate
 

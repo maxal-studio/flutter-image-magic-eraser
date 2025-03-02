@@ -235,7 +235,6 @@ class _InpaintingPageState extends State<InpaintingPage> {
                             children: [
                               Image.asset(
                                 image!.path,
-                                width: 400,
                               ),
                               _debugMaskImage!,
                             ],

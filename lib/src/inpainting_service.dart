@@ -6,12 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
-import 'mappers/input_size.dart';
 import 'services/image_processing_service.dart';
 import 'services/mask_generation_service.dart';
 import 'services/onnx_model_service.dart';
-
-export 'mappers/input_size.dart';
 
 /// Main service for image inpainting
 class InpaintingService {
@@ -22,7 +19,7 @@ class InpaintingService {
   static InpaintingService get instance => _instance;
 
   // LaMa model expects 512x512 input images by default
-  InputSize _modelInputSize = InputSize(width: 512, height: 512);
+  int _modelInputSize = 512;
 
   /// Initializes the ONNX environment and creates a session.
   ///
@@ -46,10 +43,10 @@ class InpaintingService {
   }
 
   /// Get model input size
-  InputSize get modelInputSize => _modelInputSize;
+  int get modelInputSize => _modelInputSize;
 
   /// Set model input size
-  void setModelInputSize(InputSize size) {
+  void setModelInputSize(int size) {
     _modelInputSize = size;
   }
 
@@ -152,8 +149,8 @@ class InpaintingService {
             name: 'InpaintingService');
       }
 
-      final resizedImage = await ImageProcessingService.instance.resizeImage(
-          originalImage, _modelInputSize.width, _modelInputSize.height);
+      final resizedImage = await ImageProcessingService.instance
+          .resizeImage(originalImage, _modelInputSize, _modelInputSize);
 
       // Decode the mask image and resize it to the required dimensions
       final originalMask = await decodeImageFromList(maskBytes);
@@ -162,8 +159,8 @@ class InpaintingService {
             name: 'InpaintingService');
       }
 
-      final resizedMask = await ImageProcessingService.instance.resizeImage(
-          originalMask, _modelInputSize.width, _modelInputSize.height);
+      final resizedMask = await ImageProcessingService.instance
+          .resizeImage(originalMask, _modelInputSize, _modelInputSize);
 
       // Convert mask to grayscale if it's not already
       final grayscaleMask =
@@ -182,7 +179,7 @@ class InpaintingService {
           .imageToFloatTensor(resizedImage);
       final imageTensor = OrtValueTensor.createTensorWithDataList(
         Float32List.fromList(rgbFloats),
-        [1, 3, _modelInputSize.width, _modelInputSize.height],
+        [1, 3, _modelInputSize, _modelInputSize],
       );
 
       // Convert the grayscale mask into a tensor format required by the ONNX model
@@ -190,7 +187,7 @@ class InpaintingService {
           .maskToFloatTensor(grayscaleMask);
       final maskTensor = OrtValueTensor.createTensorWithDataList(
         Float32List.fromList(maskFloats),
-        [1, 1, _modelInputSize.width, _modelInputSize.height],
+        [1, 1, _modelInputSize, _modelInputSize],
       );
 
       // Prepare the inputs and run inference on the ONNX model
