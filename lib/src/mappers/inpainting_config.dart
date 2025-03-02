@@ -15,19 +15,11 @@ class InpaintingConfig {
   /// The maximum expansion size in pixels (default: 200)
   final int maxExpansionSize;
 
-  /// The feather size for blending in pixels (default: 20)
-  final int featherSize;
-
-  /// Whether to enable debug logging (default: false)
-  final bool debug;
-
   /// Creates a new configuration for the inpainting algorithm
   const InpaintingConfig({
     this.inputSize = 512,
     this.expandPercentage = 0.3,
     this.maxExpansionSize = 200,
-    this.featherSize = 20,
-    this.debug = false,
   });
 
   /// Creates a copy of this configuration with the given fields replaced
@@ -35,21 +27,17 @@ class InpaintingConfig {
     int? inputSize,
     double? expandPercentage,
     int? maxExpansionSize,
-    int? featherSize,
-    bool? debug,
   }) {
     return InpaintingConfig(
       inputSize: inputSize ?? this.inputSize,
       expandPercentage: expandPercentage ?? this.expandPercentage,
       maxExpansionSize: maxExpansionSize ?? this.maxExpansionSize,
-      featherSize: featherSize ?? this.featherSize,
-      debug: debug ?? this.debug,
     );
   }
 
   /// Returns a string representation of the configuration
   @override
   String toString() {
-    return 'InpaintingConfig(inputSize: $inputSize, expandPercentage: $expandPercentage, maxExpansionSize: $maxExpansionSize, featherSize: $featherSize, debug: $debug)';
+    return 'InpaintingConfig(inputSize: $inputSize, expandPercentage: $expandPercentage, maxExpansionSize: $maxExpansionSize)';
   }
 }

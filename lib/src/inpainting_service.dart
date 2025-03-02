@@ -4,11 +4,9 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:onnxruntime/onnxruntime.dart';
 
 import 'mappers/input_size.dart';
 import 'mappers/inpainting_config.dart';
-import 'services/image_processing_service.dart';
 import 'services/mask_generation_service.dart';
 import 'services/onnx_model_service.dart';
 import 'services/polygon_inpainting_service.dart';
@@ -71,8 +69,9 @@ class InpaintingService {
 
   /// Inpaints the masked areas of an image using polygons defined by points.
   ///
-  /// This function processes the input image and inpaints the areas defined by the polygons,
-  /// returning a new image with the masked areas inpainted.
+  /// This function processes the input image and inpaints only the areas defined by the polygons,
+  /// returning a new image with the masked areas inpainted. The inpainting is applied precisely
+  /// within the polygon boundaries, ensuring that only the masked regions are affected.
   ///
   /// - [imageBytes]: The input image as a byte array.
   /// - [polygons]: A list of lists, each inner list containing at least 3 points as maps with 'x' and 'y' keys.
@@ -89,9 +88,9 @@ class InpaintingService {
   ///     {'x': 200.0, 'y': 300.0},
   ///   ],
   /// ];
-  /// final inpaintedImage = await inpaintWithPolygons(imageBytes, polygons);
+  /// final inpaintedImage = await inpaint(imageBytes, polygons);
   /// ```
-  Future<ui.Image> inpaintWithPolygons(
+  Future<ui.Image> inpaint(
     Uint8List imageBytes,
     List<List<Map<String, double>>> polygons, {
     InpaintingConfig? config,
@@ -102,7 +101,7 @@ class InpaintingService {
 
     try {
       // Use a default configuration with no feathering if none is provided
-      final effectiveConfig = config ?? const InpaintingConfig(featherSize: 0);
+      final effectiveConfig = config ?? const InpaintingConfig();
 
       // Use the PolygonInpaintingService to process the polygons
       return await PolygonInpaintingService.instance.inpaintPolygons(
@@ -116,102 +115,6 @@ class InpaintingService {
             name: "InpaintingService", error: e);
       }
       rethrow;
-    }
-  }
-
-  /// Inpaints the masked areas of an image.
-  ///
-  /// This function processes the input image and inpaints the areas defined by the mask,
-  /// returning a new image with the masked areas inpainted.
-  ///
-  /// - [imageBytes]: The input image as a byte array.
-  /// - [maskBytes]: The mask image as a byte array.
-  /// - Returns: A [ui.Image] with the masked areas inpainted.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final imageBytes = await File('path_to_image').readAsBytes();
-  /// final maskBytes = await File('path_to_mask').readAsBytes();
-  /// final inpaintedImage = await inpaint(imageBytes, maskBytes);
-  /// ```
-  Future<ui.Image> inpaint(Uint8List imageBytes, Uint8List maskBytes) async {
-    if (!isModelLoaded()) {
-      throw Exception("ONNX model not initialized. Call initializeOrt first.");
-    }
-
-    try {
-      // Decode the input image and mask
-      final originalImage = await decodeImageFromList(imageBytes);
-      final maskImage = await decodeImageFromList(maskBytes);
-
-      // Resize the images to the model's input size
-      final resizedImage = await ImageProcessingService.instance.resizeImage(
-        originalImage,
-        _modelInputSize.width,
-        _modelInputSize.height,
-      );
-
-      final resizedMask = await ImageProcessingService.instance.resizeImage(
-        maskImage,
-        _modelInputSize.width,
-        _modelInputSize.height,
-      );
-
-      // Convert the images to tensors
-      final rgbFloats = await ImageProcessingService.instance
-          .imageToFloatTensor(resizedImage);
-      final maskFloats =
-          await ImageProcessingService.instance.maskToFloatTensor(resizedMask);
-
-      // Create tensors for ONNX model
-      final imageTensor = OrtValueTensor.createTensorWithDataList(
-        Float32List.fromList(rgbFloats),
-        [1, 3, _modelInputSize.width, _modelInputSize.height],
-      );
-
-      final maskTensor = OrtValueTensor.createTensorWithDataList(
-        Float32List.fromList(maskFloats),
-        [1, 1, _modelInputSize.width, _modelInputSize.height],
-      );
-
-      // Run inference
-      final inputs = {
-        'image': imageTensor,
-        'mask': maskTensor,
-      };
-
-      final outputs = await OnnxModelService.instance.runInference(inputs);
-
-      // Release tensors
-      imageTensor.release();
-      maskTensor.release();
-
-      // Process output
-      final outputTensor = outputs?[0]?.value;
-      if (outputTensor is List) {
-        final output = outputTensor[0];
-        final inpaintedImage =
-            await ImageProcessingService.instance.rgbTensorToUIImage(output);
-
-        // Resize back to original size if needed
-        if (originalImage.width != _modelInputSize.width ||
-            originalImage.height != _modelInputSize.height) {
-          return await ImageProcessingService.instance.resizeImage(
-            inpaintedImage,
-            originalImage.width,
-            originalImage.height,
-          );
-        }
-
-        return inpaintedImage;
-      } else {
-        throw Exception('Unexpected output format from ONNX model.');
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        log('Error inpainting image: $e', name: "InpaintingService", error: e);
-      }
-      throw Exception('Error inpainting image: $e');
     }
   }
 

@@ -28,8 +28,9 @@ class PolygonInpaintingService {
   /// Inpaints the masked areas of an image using polygons defined by points.
   ///
   /// This method processes each polygon individually, expanding the bounding box,
-  /// cropping and resizing the image, and blending the inpainted patch back into
-  /// the original image.
+  /// cropping and resizing the image, and applying the inpainted patch precisely
+  /// within the polygon boundaries. This ensures that only the masked regions are
+  /// affected by the inpainting process.
   ///
   /// - [imageBytes]: The input image as a byte array.
   /// - [polygons]: A list of lists, each inner list containing at least 3 points as maps with 'x' and 'y' keys.
@@ -43,7 +44,7 @@ class PolygonInpaintingService {
     // Use default configuration if none provided
     final cfg = config ?? const InpaintingConfig();
 
-    if (kDebugMode && cfg.debug) {
+    if (kDebugMode) {
       log('Starting polygon-based inpainting with config: $cfg',
           name: 'PolygonInpaintingService');
     }
@@ -78,6 +79,17 @@ class PolygonInpaintingService {
   }
 
   /// Inpaints a single polygon in the image
+  ///
+  /// This method processes a single polygon by:
+  /// 1. Computing a bounding box around the polygon
+  /// 2. Expanding the bounding box to provide context for the inpainting model
+  /// 3. Cropping the image to the expanded bounding box
+  /// 4. Creating a mask from the polygon
+  /// 5. Resizing the cropped image and mask if needed
+  /// 6. Running the inpainting model
+  /// 7. Applying the inpainted patch precisely within the polygon boundaries
+  ///
+  /// The result is an image where only the area inside the polygon has been inpainted.
   Future<ui.Image> _inpaintPolygon(
     ui.Image image,
     List<Map<String, double>> polygon,
@@ -110,10 +122,7 @@ class PolygonInpaintingService {
       // 3. Crop the original image using the adjusted bbox
       final croppedImage = await _cropImage(
         image,
-        expandedBox.x,
-        expandedBox.y,
-        expandedBox.width,
-        expandedBox.height,
+        expandedBox,
       );
 
       // Generate mask for the polygon
@@ -166,12 +175,12 @@ class PolygonInpaintingService {
         finalPatch = inpaintedPatch;
       }
 
-      // 6. Blend inpainted patch into original image
+      // 6. Apply inpainted patch only within the polygon area
       return await _blendPatchIntoImage(
         image,
         finalPatch,
         expandedBox,
-        config.featherSize,
+        polygon,
       );
     } catch (e) {
       if (kDebugMode) {
@@ -223,12 +232,14 @@ class PolygonInpaintingService {
   /// Crops an image to the specified rectangle
   Future<ui.Image> _cropImage(
     ui.Image image,
-    int x,
-    int y,
-    int width,
-    int height,
+    BoundingBox box,
   ) async {
     try {
+      final x = box.x;
+      final y = box.y;
+      final width = box.width;
+      final height = box.height;
+
       // Ensure the crop rectangle is within the image bounds
       final safeX = x.clamp(0, image.width - 1);
       final safeY = y.clamp(0, image.height - 1);
@@ -343,22 +354,52 @@ class PolygonInpaintingService {
 
   /// Blends an inpainted patch back into the original image
   ///
-  /// This method simply draws the inpainted patch directly onto the original image
-  /// without any blending or feathering.
+  /// This method draws the inpainted patch only within the polygon area,
+  /// ensuring that only the masked region is affected by the inpainting.
   Future<ui.Image> _blendPatchIntoImage(
     ui.Image originalImage,
     ui.Image patch,
     BoundingBox box,
-    int featherSize, // Kept for API compatibility but not used
+    List<Map<String, double>> polygon, // Original polygon for clipping
   ) async {
     try {
+      // Create a picture recorder
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
 
       // Draw the original image as the base
       canvas.drawImage(originalImage, Offset.zero, Paint());
 
-      // Draw the patch directly at the correct position
+      // Save the canvas state before clipping
+      canvas.save();
+
+      // Create a clip path based on the polygon
+      if (polygon.isNotEmpty) {
+        final polygonPath = Path();
+
+        // Start at the first point
+        polygonPath.moveTo(
+          polygon[0]['x']!.toDouble(),
+          polygon[0]['y']!.toDouble(),
+        );
+
+        // Add lines to each subsequent point
+        for (int i = 1; i < polygon.length; i++) {
+          polygonPath.lineTo(
+            polygon[i]['x']!.toDouble(),
+            polygon[i]['y']!.toDouble(),
+          );
+        }
+
+        // Close the path
+        polygonPath.close();
+
+        // Use the polygon path as a clip
+        canvas.clipPath(polygonPath);
+      }
+
+      // Draw the patch at the correct position with high quality
+      // This will only affect the area inside the polygon clip
       canvas.drawImageRect(
         patch,
         Rect.fromLTWH(0, 0, patch.width.toDouble(), patch.height.toDouble()),
@@ -368,8 +409,13 @@ class PolygonInpaintingService {
           box.width.toDouble(),
           box.height.toDouble(),
         ),
-        Paint()..filterQuality = FilterQuality.high,
+        Paint()
+          ..filterQuality = FilterQuality.high
+          ..isAntiAlias = true,
       );
+
+      // Restore the canvas state
+      canvas.restore();
 
       // Convert to an image
       final picture = recorder.endRecording();
@@ -388,6 +434,7 @@ class PolygonInpaintingService {
     ui.Image originalImage,
     ui.Image patch,
     BoundingBox box,
+    List<Map<String, double>> polygon, // Polygon for clipping
   ) async {
     try {
       final recorder = ui.PictureRecorder();
@@ -396,21 +443,36 @@ class PolygonInpaintingService {
       // Draw the original image as the base
       canvas.drawImage(originalImage, Offset.zero, Paint());
 
-      // Draw a border around the bounding box
-      canvas.drawRect(
-        Rect.fromLTWH(
-          box.x.toDouble(),
-          box.y.toDouble(),
-          box.width.toDouble(),
-          box.height.toDouble(),
-        ),
-        Paint()
-          ..color = Colors.red
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0,
-      );
+      // Save the canvas state before clipping
+      canvas.save();
 
-      // Draw the patch directly at the correct position
+      // Create a clip path based on the polygon
+      if (polygon.isNotEmpty) {
+        final polygonPath = Path();
+
+        // Start at the first point
+        polygonPath.moveTo(
+          polygon[0]['x']!.toDouble(),
+          polygon[0]['y']!.toDouble(),
+        );
+
+        // Add lines to each subsequent point
+        for (int i = 1; i < polygon.length; i++) {
+          polygonPath.lineTo(
+            polygon[i]['x']!.toDouble(),
+            polygon[i]['y']!.toDouble(),
+          );
+        }
+
+        // Close the path
+        polygonPath.close();
+
+        // Use the polygon path as a clip
+        canvas.clipPath(polygonPath);
+      }
+
+      // Draw the patch at the correct position with high quality
+      // This will only affect the area inside the polygon clip
       canvas.drawImageRect(
         patch,
         Rect.fromLTWH(0, 0, patch.width.toDouble(), patch.height.toDouble()),
@@ -420,8 +482,13 @@ class PolygonInpaintingService {
           box.width.toDouble(),
           box.height.toDouble(),
         ),
-        Paint()..filterQuality = FilterQuality.high,
+        Paint()
+          ..filterQuality = FilterQuality.high
+          ..isAntiAlias = true,
       );
+
+      // Restore the canvas state
+      canvas.restore();
 
       final picture = recorder.endRecording();
       return await picture.toImage(originalImage.width, originalImage.height);
@@ -500,10 +567,7 @@ class PolygonInpaintingService {
         // 3. Crop the current image using the adjusted bbox
         final croppedImage = await _cropImage(
           currentImage,
-          expandedBox.x,
-          expandedBox.y,
-          expandedBox.width,
-          expandedBox.height,
+          expandedBox,
         );
         debugImages['cropped_$polyIndex'] = croppedImage;
 
@@ -569,6 +633,7 @@ class PolygonInpaintingService {
             currentImage,
             finalPatch,
             expandedBox,
+            polygon,
           );
           debugImages['blend_visualization_$polyIndex'] = blendVisualization;
 
@@ -577,7 +642,7 @@ class PolygonInpaintingService {
             currentImage,
             finalPatch,
             expandedBox,
-            cfg.featherSize,
+            polygon,
           );
 
           // Store the result after processing this polygon

@@ -105,7 +105,7 @@ final List<List<Map<String, double>>> polygons = [
 ];
 
 // Perform inpainting with polygons
-final ui.Image result = await InpaintingService.instance.inpaintWithPolygons(
+final ui.Image result = await InpaintingService.instance.inpaint(
   imageBytes,
   polygons,
 );

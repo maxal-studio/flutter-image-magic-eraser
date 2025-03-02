@@ -53,16 +53,16 @@ class _DebugPageState extends State<DebugPage> {
     [
       {'x': 130.0, 'y': 100.0},
       {'x': 301.0, 'y': 100.0},
-      {'x': 306.0, 'y': 1.0},
-      {'x': 127.0, 'y': 1.0},
+      {'x': 306.0, 'y': 0},
+      {'x': 127.0, 'y': 0},
     ],
     // Man walking
     [
       {'x': 803.0, 'y': 214.0},
       {'x': 792.0, 'y': 260.0},
-      {'x': 803.0, 'y': 294.0},
-      {'x': 829.0, 'y': 298.0},
-      {'x': 814.0, 'y': 218.0},
+      {'x': 810.0, 'y': 294.0},
+      {'x': 840.0, 'y': 298.0},
+      {'x': 820.0, 'y': 218.0},
     ],
   ];
 
@@ -71,8 +71,6 @@ class _DebugPageState extends State<DebugPage> {
     inputSize: 512,
     expandPercentage: 0.3,
     maxExpansionSize: 200,
-    featherSize: 0, // No feathering for testing
-    debug: true,
   );
 
   @override
@@ -165,7 +163,7 @@ class _DebugPageState extends State<DebugPage> {
                                     onPressed: pickImage,
                                     child: const Text("Pick Image"),
                                   )
-                                : Image.file(File(image!.path), width: 300),
+                                : Image.file(File(image!.path), width: 800),
                           ],
                         ),
                       ],
@@ -208,7 +206,7 @@ class _DebugPageState extends State<DebugPage> {
                             onPressed: _isInpainting
                                 ? null
                                 : () => _inpaintWithPolygons(),
-                            child: const Text("Inpaint (No Feathering)"),
+                            child: const Text("Inpaint Polygons"),
                           ),
                           ElevatedButton(
                             onPressed:
@@ -235,7 +233,7 @@ class _DebugPageState extends State<DebugPage> {
                         const SizedBox(height: 8),
                         RawImage(
                           image: _visualizationImage,
-                          width: 400,
+                          width: 800,
                         ),
                         const SizedBox(height: 16),
                       ],
@@ -296,7 +294,7 @@ class _DebugPageState extends State<DebugPage> {
                                       RawImage(
                                         image:
                                             _debugImages['before_polygon_$i'],
-                                        width: 150,
+                                        width: 512,
                                       ),
                                     ],
                                   ),
@@ -311,7 +309,7 @@ class _DebugPageState extends State<DebugPage> {
                                               fontWeight: FontWeight.bold)),
                                       RawImage(
                                         image: _debugImages['after_polygon_$i'],
-                                        width: 150,
+                                        width: 512,
                                       ),
                                     ],
                                   ),
@@ -333,7 +331,7 @@ class _DebugPageState extends State<DebugPage> {
                                               fontWeight: FontWeight.bold)),
                                       RawImage(
                                         image: _debugImages['cropped_$i'],
-                                        width: 150,
+                                        width: 512,
                                       ),
                                     ],
                                   ),
@@ -345,7 +343,7 @@ class _DebugPageState extends State<DebugPage> {
                                               fontWeight: FontWeight.bold)),
                                       RawImage(
                                         image: _debugImages['mask_$i'],
-                                        width: 150,
+                                        width: 512,
                                       ),
                                     ],
                                   ),
@@ -362,7 +360,7 @@ class _DebugPageState extends State<DebugPage> {
                                       TextStyle(fontWeight: FontWeight.bold)),
                               RawImage(
                                 image: _debugImages['inpainted_patch_$i'],
-                                width: 300,
+                                width: 800,
                               ),
                               const SizedBox(height: 16),
                             ],
@@ -375,7 +373,7 @@ class _DebugPageState extends State<DebugPage> {
                                       TextStyle(fontWeight: FontWeight.bold)),
                               RawImage(
                                 image: _debugImages['blend_visualization_$i'],
-                                width: 300,
+                                width: 800,
                               ),
                               const SizedBox(height: 16),
                             ],
@@ -394,7 +392,7 @@ class _DebugPageState extends State<DebugPage> {
                                       TextStyle(fontWeight: FontWeight.bold)),
                               RawImage(
                                 image: _debugImages['original'],
-                                width: 300,
+                                width: 800,
                               ),
                               const SizedBox(height: 16),
                             ],
@@ -418,7 +416,7 @@ class _DebugPageState extends State<DebugPage> {
                                           fontWeight: FontWeight.bold)),
                                   RawImage(
                                     image: _debugImages['resized_image_$i'],
-                                    width: 300,
+                                    width: 800,
                                   ),
                                   const SizedBox(height: 16),
                                 ],
@@ -430,7 +428,7 @@ class _DebugPageState extends State<DebugPage> {
                                           fontWeight: FontWeight.bold)),
                                   RawImage(
                                     image: _debugImages['resized_mask_$i'],
-                                    width: 300,
+                                    width: 800,
                                   ),
                                   const SizedBox(height: 16),
                                 ],
@@ -445,7 +443,7 @@ class _DebugPageState extends State<DebugPage> {
                                   RawImage(
                                     image:
                                         _debugImages['inpainted_patch_raw_$i'],
-                                    width: 300,
+                                    width: 800,
                                   ),
                                   const SizedBox(height: 16),
                                 ],
@@ -459,7 +457,7 @@ class _DebugPageState extends State<DebugPage> {
                                   RawImage(
                                     image: _debugImages[
                                         'inpainted_patch_resized_$i'],
-                                    width: 300,
+                                    width: 800,
                                   ),
                                   const SizedBox(height: 16),
                                 ],
@@ -492,7 +490,7 @@ class _DebugPageState extends State<DebugPage> {
     try {
       final imageBytes = await File(image!.path).readAsBytes();
 
-      final outputImage = await InpaintingService.instance.inpaintWithPolygons(
+      final outputImage = await InpaintingService.instance.inpaint(
         imageBytes,
         _demoPolygons,
         config: _config,

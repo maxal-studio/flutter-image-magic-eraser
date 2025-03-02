@@ -26,7 +26,7 @@ class _InpaintingPageState extends State<InpaintingPage> {
 
   // Demo polygons for testing inpainting
   final List<List<Map<String, double>>> _demoPolygons = [
-    // Rectangle in the center to cover the man
+    // Man sitting
     [
       {'x': 223.0, 'y': 347.0},
       {'x': 218.0, 'y': 314.0},
@@ -48,16 +48,16 @@ class _InpaintingPageState extends State<InpaintingPage> {
     [
       {'x': 130.0, 'y': 100.0},
       {'x': 301.0, 'y': 100.0},
-      {'x': 306.0, 'y': 1.0},
-      {'x': 127.0, 'y': 1.0},
+      {'x': 306.0, 'y': 0},
+      {'x': 127.0, 'y': 0},
     ],
     // Man walking
     [
       {'x': 803.0, 'y': 214.0},
       {'x': 792.0, 'y': 260.0},
-      {'x': 803.0, 'y': 294.0},
-      {'x': 829.0, 'y': 298.0},
-      {'x': 814.0, 'y': 218.0},
+      {'x': 810.0, 'y': 294.0},
+      {'x': 840.0, 'y': 298.0},
+      {'x': 820.0, 'y': 218.0},
     ],
   ];
 
@@ -66,8 +66,6 @@ class _InpaintingPageState extends State<InpaintingPage> {
     inputSize: 512,
     expandPercentage: 0.3,
     maxExpansionSize: 200,
-    featherSize: 20,
-    debug: true,
   );
 
   @override
@@ -173,7 +171,7 @@ class _InpaintingPageState extends State<InpaintingPage> {
                                     onPressed: pickImage,
                                     child: const Text("Pick Image"),
                                   )
-                                : Image.file(File(image!.path), width: 300),
+                                : Image.file(File(image!.path), width: 800),
                           ],
                         ),
                       ],
@@ -210,7 +208,7 @@ class _InpaintingPageState extends State<InpaintingPage> {
                       ElevatedButton(
                         onPressed:
                             _isInpainting ? null : () => _inpaintWithPolygons(),
-                        child: const Text("Inpaint with Polygons"),
+                        child: const Text("Inpaint Polygons"),
                       ),
                     ],
                   ],
@@ -231,7 +229,7 @@ class _InpaintingPageState extends State<InpaintingPage> {
     try {
       final imageBytes = await File(image!.path).readAsBytes();
 
-      final outputImage = await InpaintingService.instance.inpaintWithPolygons(
+      final outputImage = await InpaintingService.instance.inpaint(
         imageBytes,
         _demoPolygons,
         config: _config,
