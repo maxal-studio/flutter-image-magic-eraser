@@ -355,16 +355,40 @@ class PolygonInpaintingService {
     }
   }
 
-  /// Blends an inpainted patch back into the original image
-  ///
-  /// This method draws the inpainted patch only within the polygon area,
-  /// ensuring that only the masked region is affected by the inpainting.
-  Future<ui.Image> _blendPatchIntoImage(
+  /// Creates a path from a polygon
+  Path _createPolygonPath(List<Map<String, double>> polygon) {
+    final polygonPath = Path();
+
+    if (polygon.isNotEmpty) {
+      // Start at the first point
+      polygonPath.moveTo(
+        polygon[0]['x']!.toDouble(),
+        polygon[0]['y']!.toDouble(),
+      );
+
+      // Add lines to each subsequent point
+      for (int i = 1; i < polygon.length; i++) {
+        polygonPath.lineTo(
+          polygon[i]['x']!.toDouble(),
+          polygon[i]['y']!.toDouble(),
+        );
+      }
+
+      // Close the path
+      polygonPath.close();
+    }
+
+    return polygonPath;
+  }
+
+  /// Blends a patch within a polygon boundary
+  Future<ui.Image> _blendPatchWithinPolygon(
     ui.Image originalImage,
     ui.Image patch,
     BoundingBox box,
-    List<Map<String, double>> polygon, // Original polygon for clipping
-  ) async {
+    List<Map<String, double>> polygon, [
+    String debugTag = '',
+  ]) async {
     try {
       // Create a picture recorder
       final recorder = ui.PictureRecorder();
@@ -376,30 +400,9 @@ class PolygonInpaintingService {
       // Save the canvas state before clipping
       canvas.save();
 
-      // Create a clip path based on the polygon
-      if (polygon.isNotEmpty) {
-        final polygonPath = Path();
-
-        // Start at the first point
-        polygonPath.moveTo(
-          polygon[0]['x']!.toDouble(),
-          polygon[0]['y']!.toDouble(),
-        );
-
-        // Add lines to each subsequent point
-        for (int i = 1; i < polygon.length; i++) {
-          polygonPath.lineTo(
-            polygon[i]['x']!.toDouble(),
-            polygon[i]['y']!.toDouble(),
-          );
-        }
-
-        // Close the path
-        polygonPath.close();
-
-        // Use the polygon path as a clip
-        canvas.clipPath(polygonPath);
-      }
+      // Create and apply the polygon clip path
+      final polygonPath = _createPolygonPath(polygon);
+      canvas.clipPath(polygonPath);
 
       // Draw the patch at the correct position with high quality
       // This will only affect the area inside the polygon clip
@@ -425,11 +428,27 @@ class PolygonInpaintingService {
       return await picture.toImage(originalImage.width, originalImage.height);
     } catch (e) {
       if (kDebugMode) {
-        log('Error in _blendPatchIntoImage: $e',
-            name: 'PolygonInpaintingService', error: e);
+        final logTag = debugTag.isNotEmpty
+            ? '$debugTag - _blendPatchWithinPolygon'
+            : '_blendPatchWithinPolygon';
+        log('Error in $logTag: $e', name: 'PolygonInpaintingService', error: e);
       }
       rethrow;
     }
+  }
+
+  /// Blends an inpainted patch back into the original image
+  ///
+  /// This method draws the inpainted patch only within the polygon area,
+  /// ensuring that only the masked region is affected by the inpainting.
+  Future<ui.Image> _blendPatchIntoImage(
+    ui.Image originalImage,
+    ui.Image patch,
+    BoundingBox box,
+    List<Map<String, double>> polygon, // Original polygon for clipping
+  ) async {
+    return _blendPatchWithinPolygon(
+        originalImage, patch, box, polygon, '_blendPatchIntoImage');
   }
 
   /// Generates a visualization of how the patch would be blended
@@ -439,69 +458,8 @@ class PolygonInpaintingService {
     BoundingBox box,
     List<Map<String, double>> polygon, // Polygon for clipping
   ) async {
-    try {
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-
-      // Draw the original image as the base
-      canvas.drawImage(originalImage, Offset.zero, Paint());
-
-      // Save the canvas state before clipping
-      canvas.save();
-
-      // Create a clip path based on the polygon
-      if (polygon.isNotEmpty) {
-        final polygonPath = Path();
-
-        // Start at the first point
-        polygonPath.moveTo(
-          polygon[0]['x']!.toDouble(),
-          polygon[0]['y']!.toDouble(),
-        );
-
-        // Add lines to each subsequent point
-        for (int i = 1; i < polygon.length; i++) {
-          polygonPath.lineTo(
-            polygon[i]['x']!.toDouble(),
-            polygon[i]['y']!.toDouble(),
-          );
-        }
-
-        // Close the path
-        polygonPath.close();
-
-        // Use the polygon path as a clip
-        canvas.clipPath(polygonPath);
-      }
-
-      // Draw the patch at the correct position with high quality
-      // This will only affect the area inside the polygon clip
-      canvas.drawImageRect(
-        patch,
-        Rect.fromLTWH(0, 0, patch.width.toDouble(), patch.height.toDouble()),
-        Rect.fromLTWH(
-          box.x.toDouble(),
-          box.y.toDouble(),
-          box.width.toDouble(),
-          box.height.toDouble(),
-        ),
-        Paint()
-          ..filterQuality = FilterQuality.high
-          ..isAntiAlias = true,
-      );
-
-      // Restore the canvas state
-      canvas.restore();
-
-      final picture = recorder.endRecording();
-      return await picture.toImage(originalImage.width, originalImage.height);
-    } catch (e) {
-      if (kDebugMode) {
-        log('Error creating blend visualization: $e',
-            name: 'PolygonInpaintingService', error: e);
-      }
-      rethrow;
-    }
+    return _blendPatchWithinPolygon(
+        originalImage, patch, box, polygon, '_createBlendVisualization');
   }
 
   /// Generates debug images for each step of the inpainting process
