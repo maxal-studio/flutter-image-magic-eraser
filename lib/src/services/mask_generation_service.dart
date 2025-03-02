@@ -43,7 +43,9 @@ class MaskGenerationService {
     // Fill the canvas with the background color
     canvas.drawRect(
       Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-      Paint()..color = backgroundColor,
+      Paint()
+        ..color = backgroundColor
+        ..isAntiAlias = false, // Disable anti-aliasing for crisp edges
     );
 
     // Draw each polygon
@@ -60,7 +62,8 @@ class MaskGenerationService {
       // Create a fill paint for the polygon
       final fillPaint = Paint()
         ..color = fillColor
-        ..style = PaintingStyle.fill;
+        ..style = PaintingStyle.fill
+        ..isAntiAlias = false; // Disable anti-aliasing for crisp edges
 
       // Create a path for the polygon
       final uiPath = Path();
@@ -86,7 +89,8 @@ class MaskGenerationService {
           ..strokeWidth = strokeWidth
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round
-          ..style = PaintingStyle.stroke;
+          ..style = PaintingStyle.stroke
+          ..isAntiAlias = false; // Disable anti-aliasing for crisp edges
 
         canvas.drawPath(uiPath, outlinePaint);
       }
@@ -95,6 +99,11 @@ class MaskGenerationService {
     // End recording and convert to an image
     final picture = recorder.endRecording();
     final image = await picture.toImage(width, height);
+
+    if (kDebugMode) {
+      log('Generated mask with dimensions: ${width}x$height',
+          name: 'MaskGenerationService');
+    }
 
     return image;
   }

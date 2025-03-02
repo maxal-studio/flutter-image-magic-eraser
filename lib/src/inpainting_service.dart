@@ -6,9 +6,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
+import 'mappers/input_size.dart';
+import 'mappers/inpainting_config.dart';
 import 'services/image_processing_service.dart';
 import 'services/mask_generation_service.dart';
 import 'services/onnx_model_service.dart';
+import 'services/polygon_inpainting_service.dart';
+
+export 'mappers/input_size.dart';
+export 'mappers/inpainting_config.dart';
 
 /// Main service for image inpainting
 class InpaintingService {
@@ -19,7 +25,7 @@ class InpaintingService {
   static InpaintingService get instance => _instance;
 
   // LaMa model expects 512x512 input images by default
-  int _modelInputSize = 512;
+  InputSize _modelInputSize = const InputSize(width: 512, height: 512);
 
   /// Initializes the ONNX environment and creates a session.
   ///
@@ -43,10 +49,10 @@ class InpaintingService {
   }
 
   /// Get model input size
-  int get modelInputSize => _modelInputSize;
+  InputSize get modelInputSize => _modelInputSize;
 
   /// Set model input size
-  void setModelInputSize(int size) {
+  void setModelInputSize(InputSize size) {
     _modelInputSize = size;
   }
 
@@ -70,7 +76,7 @@ class InpaintingService {
   ///
   /// - [imageBytes]: The input image as a byte array.
   /// - [polygons]: A list of lists, each inner list containing at least 3 points as maps with 'x' and 'y' keys.
-  /// - [strokeWidth]: The width of the strokes for outlines if needed (default: 5.0).
+  /// - [config]: Configuration parameters for the inpainting algorithm.
   /// - Returns: A [ui.Image] with the masked areas inpainted.
   ///
   /// Example usage:
@@ -87,30 +93,23 @@ class InpaintingService {
   /// ```
   Future<ui.Image> inpaintWithPolygons(
     Uint8List imageBytes,
-    List<List<Map<String, double>>> polygons,
-  ) async {
+    List<List<Map<String, double>>> polygons, {
+    InpaintingConfig? config,
+  }) async {
     if (!isModelLoaded()) {
       throw Exception("ONNX model not initialized. Call initializeOrt first.");
     }
 
     try {
-      // Decode the input image
-      final originalImage = await decodeImageFromList(imageBytes);
-      if (kDebugMode) {
-        log('Original image size: ${originalImage.width}x${originalImage.height}',
-            name: 'InpaintingService');
-      }
+      // Use a default configuration with no feathering if none is provided
+      final effectiveConfig = config ?? const InpaintingConfig(featherSize: 0);
 
-      // Generate mask image from polygons
-      final maskImage = await MaskGenerationService.instance
-          .generateMask(polygons, originalImage.width, originalImage.height);
-
-      // Convert mask to bytes
-      final maskBytes =
-          await MaskGenerationService.instance.maskImageToBytes(maskImage);
-
-      // Inpaint using the generated mask
-      return await inpaint(imageBytes, maskBytes);
+      // Use the PolygonInpaintingService to process the polygons
+      return await PolygonInpaintingService.instance.inpaintPolygons(
+        imageBytes,
+        polygons,
+        config: effectiveConfig,
+      );
     } catch (e) {
       if (kDebugMode) {
         log('Error inpainting with polygons: $e',
@@ -135,62 +134,47 @@ class InpaintingService {
   /// final maskBytes = await File('path_to_mask').readAsBytes();
   /// final inpaintedImage = await inpaint(imageBytes, maskBytes);
   /// ```
-  Future<ui.Image> inpaint(Uint8List imageBytes, Uint8List maskBytes,
-      {bool debug = false}) async {
+  Future<ui.Image> inpaint(Uint8List imageBytes, Uint8List maskBytes) async {
     if (!isModelLoaded()) {
       throw Exception("ONNX model not initialized. Call initializeOrt first.");
     }
 
     try {
-      // Decode the input image and resize it to the required dimensions
+      // Decode the input image and mask
       final originalImage = await decodeImageFromList(imageBytes);
-      if (kDebugMode) {
-        log('Original image size: ${originalImage.width}x${originalImage.height}',
-            name: 'InpaintingService');
-      }
+      final maskImage = await decodeImageFromList(maskBytes);
 
-      final resizedImage = await ImageProcessingService.instance
-          .resizeImage(originalImage, _modelInputSize, _modelInputSize);
-
-      // Decode the mask image and resize it to the required dimensions
-      final originalMask = await decodeImageFromList(maskBytes);
-      if (kDebugMode) {
-        log('Original mask size: ${originalMask.width}x${originalMask.height}',
-            name: 'InpaintingService');
-      }
-
-      final resizedMask = await ImageProcessingService.instance
-          .resizeImage(originalMask, _modelInputSize, _modelInputSize);
-
-      // Convert mask to grayscale if it's not already
-      final grayscaleMask =
-          await ImageProcessingService.instance.convertToGrayscale(
-        resizedMask,
-        blackNWhite: true,
-        threshold: 50,
+      // Resize the images to the model's input size
+      final resizedImage = await ImageProcessingService.instance.resizeImage(
+        originalImage,
+        _modelInputSize.width,
+        _modelInputSize.height,
       );
 
-      if (kDebugMode) {
-        log('Converted mask to grayscale', name: 'InpaintingService');
-      }
+      final resizedMask = await ImageProcessingService.instance.resizeImage(
+        maskImage,
+        _modelInputSize.width,
+        _modelInputSize.height,
+      );
 
-      // Convert the resized image into a tensor format required by the ONNX model
+      // Convert the images to tensors
       final rgbFloats = await ImageProcessingService.instance
           .imageToFloatTensor(resizedImage);
+      final maskFloats =
+          await ImageProcessingService.instance.maskToFloatTensor(resizedMask);
+
+      // Create tensors for ONNX model
       final imageTensor = OrtValueTensor.createTensorWithDataList(
         Float32List.fromList(rgbFloats),
-        [1, 3, _modelInputSize, _modelInputSize],
+        [1, 3, _modelInputSize.width, _modelInputSize.height],
       );
 
-      // Convert the grayscale mask into a tensor format required by the ONNX model
-      final maskFloats = await ImageProcessingService.instance
-          .maskToFloatTensor(grayscaleMask);
       final maskTensor = OrtValueTensor.createTensorWithDataList(
         Float32List.fromList(maskFloats),
-        [1, 1, _modelInputSize, _modelInputSize],
+        [1, 1, _modelInputSize.width, _modelInputSize.height],
       );
 
-      // Prepare the inputs and run inference on the ONNX model
+      // Run inference
       final inputs = {
         'image': imageTensor,
         'mask': maskTensor,
@@ -202,22 +186,23 @@ class InpaintingService {
       imageTensor.release();
       maskTensor.release();
 
-      // Process the output tensor and generate the final image
+      // Process output
       final outputTensor = outputs?[0]?.value;
       if (outputTensor is List) {
-        final output = outputTensor[0]; // This should be RGB channels
-        if (kDebugMode) {
-          log('Output tensor shape: ${output.length} channels',
-              name: 'InpaintingService');
-          log('Processing RGB output from LaMa model',
-              name: 'InpaintingService');
+        final output = outputTensor[0];
+        final inpaintedImage =
+            await ImageProcessingService.instance.rgbTensorToUIImage(output);
+
+        // Resize back to original size if needed
+        if (originalImage.width != _modelInputSize.width ||
+            originalImage.height != _modelInputSize.height) {
+          return await ImageProcessingService.instance.resizeImage(
+            inpaintedImage,
+            originalImage.width,
+            originalImage.height,
+          );
         }
 
-        final resizedOutput = ImageProcessingService.instance
-            .resizeRGBOutput(output, originalImage.width, originalImage.height);
-
-        final inpaintedImage = await ImageProcessingService.instance
-            .rgbTensorToUIImage(resizedOutput);
         return inpaintedImage;
       } else {
         throw Exception('Unexpected output format from ONNX model.');
@@ -268,5 +253,66 @@ class InpaintingService {
       fillColor: fillColor,
       drawOutline: drawOutline,
     );
+  }
+
+  /// Generates a debug visualization of the inpainting process
+  ///
+  /// This method generates an image showing the bounding boxes and masks
+  /// for each polygon.
+  ///
+  /// [imageBytes] is the original image
+  /// [polygons] is a list of polygons, each containing a list of points
+  /// [config] is the configuration for the inpainting algorithm
+  Future<ui.Image> generateDebugVisualization(
+    Uint8List imageBytes,
+    List<List<Map<String, double>>> polygons, {
+    InpaintingConfig? config,
+  }) async {
+    return await PolygonInpaintingService.instance.generateDebugVisualization(
+      imageBytes,
+      polygons,
+      config: config,
+    );
+  }
+
+  /// Generates debug images for each step of the inpainting process
+  ///
+  /// This method returns a map of debug images for each step of the inpainting process:
+  /// - 'original': The original input image
+  /// - 'cropped': The cropped image from the bounding box
+  /// - 'mask': The mask generated for the polygon
+  /// - 'resized_image': The resized image (if resizing was needed)
+  /// - 'resized_mask': The resized mask (if resizing was needed)
+  /// - 'inpainted_patch_raw': The raw inpainted patch from the model
+  /// - 'inpainted_patch_resized': The resized inpainted patch (if resizing was needed)
+  /// - 'inpainted_patch': The final inpainted patch
+  /// - 'blended': Visualization of how the patch is blended into the original image
+  ///
+  /// - [imageBytes]: The input image as a byte array.
+  /// - [polygons]: A list of lists, each inner list containing at least 3 points as maps with 'x' and 'y' keys.
+  /// - [config]: Configuration parameters for the inpainting algorithm.
+  /// - Returns: A map of debug images.
+  Future<Map<String, ui.Image>> generateDebugImages(
+    Uint8List imageBytes,
+    List<List<Map<String, double>>> polygons, {
+    InpaintingConfig? config,
+  }) async {
+    if (!isModelLoaded()) {
+      throw Exception("ONNX model not initialized. Call initializeOrt first.");
+    }
+
+    try {
+      return await PolygonInpaintingService.instance.generateDebugImages(
+        imageBytes,
+        polygons,
+        config: config,
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error generating debug images: $e',
+            name: "InpaintingService", error: e);
+      }
+      rethrow;
+    }
   }
 }

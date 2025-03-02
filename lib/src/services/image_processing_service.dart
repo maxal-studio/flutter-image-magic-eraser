@@ -109,9 +109,28 @@ class ImageProcessingService {
     final pixelCount = maskImage.width * maskImage.height;
     final floats = List<double>.filled(pixelCount, 0);
 
-    // For mask, we only need one channel (using red channel as grayscale value)
+    // For mask, we need to ensure it's truly binary (0 or 1)
+    // We'll use a threshold of 128 (mid-gray) to determine if a pixel is white or black
     for (int i = 0; i < pixelCount; i++) {
-      floats[i] = rgbaBytes[i * 4] / 255.0; // Use red channel as the mask value
+      // Calculate grayscale value using standard luminance formula
+      final r = rgbaBytes[i * 4];
+      final g = rgbaBytes[i * 4 + 1];
+      final b = rgbaBytes[i * 4 + 2];
+      final luminance = (0.299 * r + 0.587 * g + 0.114 * b);
+
+      // Apply threshold to get binary value (0 or 1)
+      floats[i] = luminance > 128 ? 1.0 : 0.0;
+    }
+
+    if (kDebugMode) {
+      // Log some statistics about the mask
+      int nonZeroCount = 0;
+      for (int i = 0; i < pixelCount; i++) {
+        if (floats[i] > 0) nonZeroCount++;
+      }
+      final percentNonZero = (nonZeroCount / pixelCount) * 100;
+      log('Mask statistics: $nonZeroCount/$pixelCount non-zero pixels (${percentNonZero.toStringAsFixed(2)}%)',
+          name: 'ImageProcessingService');
     }
 
     return floats;
