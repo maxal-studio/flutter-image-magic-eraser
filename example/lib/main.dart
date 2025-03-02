@@ -7,7 +7,8 @@ import 'package:image_magic_eraser/image_magic_eraser.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:ui' as ui;
 
-import 'debug_page.dart';
+import 'debug_images_page.dart';
+import 'visualization_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -22,7 +23,22 @@ class MyApp extends StatelessWidget {
       title: 'Image Magic Eraser Demo',
       theme: ThemeData(
         primarySwatch: Colors.blue,
+        brightness: Brightness.light,
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.light,
+        ),
       ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.dark,
+        ),
+      ),
+      themeMode: ThemeMode.system,
       home: const PolygonInpaintingPage(),
     );
   }
@@ -44,7 +60,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
   ImageProvider? _imageProvider;
 
   // Maximum number of polygons
-  int _maxPolygons = 5;
+  final int _maxPolygons = 5;
 
   // Inpainting state
   bool _isModelLoaded = false;
@@ -89,12 +105,16 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
       await InpaintingService.instance
           .initializeOrt('assets/models/lama_fp32.onnx');
 
+      if (!mounted) return;
+
       setState(() {
         _isModelLoaded = true;
         _isLoadingModel = false;
       });
       _showSuccess('Model loaded successfully');
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         _isModelLoaded = false;
         _isLoadingModel = false;
@@ -113,6 +133,8 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
       final bytes = await File(file.path).readAsBytes();
       final image = await decodeImageFromList(bytes);
 
+      if (!mounted) return;
+
       setState(() {
         _selectedImage = file;
         _imageBytes = bytes;
@@ -124,6 +146,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
 
       _log('Image loaded: ${image.width}x${image.height}');
     } on Exception catch (e) {
+      if (!mounted) return;
       _showError('Error picking image: $e');
     }
   }
@@ -147,21 +170,14 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
     });
   }
 
-  /// Update maximum number of polygons
-  void _updateMaxPolygons(int value) {
-    setState(() {
-      _maxPolygons = value;
-      _polygonController.maxPolygons = value;
-    });
-    _showSuccess('Maximum polygons set to $value');
-  }
-
   /// Inpaint with polygons
   Future<void> _inpaintWithPolygons() async {
-    if (_isInpainting || _selectedImage == null || _polygons.isEmpty) {
-      if (_polygons.isEmpty) {
-        _showError('Please draw at least one polygon to erase');
-      }
+    if (_imageBytes == null || _polygonController.polygons.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select an image and draw at least one polygon'),
+        ),
+      );
       return;
     }
 
@@ -170,35 +186,113 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
     });
 
     try {
-      final imageBytes =
-          _imageBytes ?? await File(_selectedImage!.path).readAsBytes();
+      // Convert polygons to the format expected by the inpainting service
+      final polygonsData = _polygonController.polygons
+          .map((polygon) => polygon.toInpaintingFormat())
+          .toList();
 
-      final outputImage = await InpaintingService.instance.inpaint(
-        imageBytes,
-        _polygons,
+      final result = await InpaintingService.instance.inpaint(
+        _imageBytes!,
+        polygonsData,
       );
 
-      // Convert the ui.Image to bytes for the Image widget
+      // Convert ui.Image to Uint8List
       final ByteData? byteData =
-          await outputImage.toByteData(format: ui.ImageByteFormat.png);
+          await result.toByteData(format: ui.ImageByteFormat.png);
       final Uint8List outputBytes = byteData!.buffer.asUint8List();
+
+      if (!mounted) return;
+
+      // Clear all polygons
+      _polygonController.clearPolygons();
 
       setState(() {
         _imageBytes = outputBytes;
         _imageProvider = MemoryImage(outputBytes);
-        _imageSize =
-            Size(outputImage.width.toDouble(), outputImage.height.toDouble());
         _isInpainting = false;
-        // Clear polygons after successful inpainting
-        _polygonController.clearPolygons();
       });
-      _showSuccess('Areas successfully erased');
+
+      // Update image size after inpainting
+      if (_imageBytes != null) {
+        final decodedImage = await decodeImageFromList(_imageBytes!);
+
+        if (!mounted) return;
+
+        setState(() {
+          _imageSize = Size(
+            decodedImage.width.toDouble(),
+            decodedImage.height.toDouble(),
+          );
+        });
+      }
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         _isInpainting = false;
       });
-      _showError('Error erasing areas: $e');
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error during inpainting: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
+  }
+
+  /// View debug images
+  void _showDebugImages() {
+    if (_imageBytes == null || _polygonController.polygons.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select an image and draw at least one polygon'),
+        ),
+      );
+      return;
+    }
+
+    // Convert polygons to the format expected by the debug images page
+    final polygonsData = _polygonController.polygons
+        .map((polygon) => polygon.toInpaintingFormat())
+        .toList();
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DebugImagesPage(
+          imageBytes: _imageBytes!,
+          polygons: polygonsData,
+        ),
+      ),
+    );
+  }
+
+  /// Show visualization
+  void _showVisualization() {
+    if (_imageBytes == null || _polygonController.polygons.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select an image and draw at least one polygon'),
+        ),
+      );
+      return;
+    }
+
+    // Convert polygons to the format expected by the visualization page
+    final polygonsData = _polygonController.polygons
+        .map((polygon) => polygon.toInpaintingFormat())
+        .toList();
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => VisualizationPage(
+          imageBytes: _imageBytes!,
+          polygons: polygonsData,
+        ),
+      ),
+    );
   }
 
   /// Show error message
@@ -233,19 +327,8 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Interactive Polygon Inpainting"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.bug_report),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const DebugPage()),
-              );
-            },
-            tooltip: 'Debug Page',
-          ),
-        ],
+        title: const Text("Image Magic Eraser"),
+        centerTitle: true,
       ),
       body: _isLoadingModel
           ? const Center(
@@ -265,129 +348,244 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
   Widget _buildMainContent() {
     return Column(
       children: [
-        // Image selection row
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ElevatedButton(
-                onPressed: _pickImage,
-                child: Text(
-                    _selectedImage == null ? "Pick Image" : "Change Image"),
-              ),
-              const SizedBox(width: 16),
-              ElevatedButton(
-                onPressed: _selectedImage != null ? _toggleDrawingMode : null,
-                child: Text(_drawingMode == DrawingMode.draw
-                    ? "Stop Drawing"
-                    : "Start Drawing"),
-              ),
-              const SizedBox(width: 16),
-              ElevatedButton(
-                onPressed: _polygons.isNotEmpty
-                    ? _polygonController.clearPolygons
-                    : null,
-                child: const Text("Clear All"),
-              ),
-              const SizedBox(width: 16),
-              ElevatedButton(
-                onPressed: _polygons.isNotEmpty
-                    ? _polygonController.undoLastPolygon
-                    : null,
-                child: const Text("Undo Last"),
-              ),
-              const SizedBox(width: 16),
-              ElevatedButton(
-                onPressed: (_selectedImage != null &&
-                        _polygons.isNotEmpty &&
-                        !_isInpainting)
-                    ? _inpaintWithPolygons
-                    : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text("Erase"),
-              ),
-            ],
-          ),
-        ),
-
-        // Max polygons setting
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text("Max Polygons: "),
-              DropdownButton<int>(
-                value: _maxPolygons,
-                items: [1, 3, 5, 10, 15, 20].map((int value) {
-                  return DropdownMenuItem<int>(
-                    value: value,
-                    child: Text(value.toString()),
-                  );
-                }).toList(),
-                onChanged: (int? newValue) {
-                  if (newValue != null) {
-                    _updateMaxPolygons(newValue);
-                  }
-                },
-              ),
-            ],
-          ),
-        ),
+        // Control panel
+        _buildControlPanel(),
 
         // Drawing area
         Expanded(
-          child: _selectedImage == null
-              ? const Center(child: Text("Please select an image"))
-              : Center(
-                  child: _isInpainting
-                      ? const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            CircularProgressIndicator(),
-                            SizedBox(height: 16),
-                            Text("Erasing selected areas..."),
-                          ],
-                        )
-                      : Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey),
-                            color: Colors.black12, // Light gray background
-                          ),
-                          child: PolygonDrawingWidget(
-                            controller: _polygonController,
-                            child: _imageProvider != null
-                                ? Image(
-                                    image: _imageProvider!,
-                                  )
-                                : null,
-                          ),
-                        ),
-                ),
+          child:
+              _selectedImage == null ? _buildEmptyState() : _buildDrawingArea(),
         ),
 
         // Status bar
-        Container(
-          padding: const EdgeInsets.all(8.0),
-          color: Colors.grey[200],
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        _buildStatusBar(),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.image_search,
+            size: 80,
+            color: Colors.grey,
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            "No image selected",
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            "Select an image to start erasing objects",
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: _pickImage,
+            icon: const Icon(Icons.add_photo_alternate),
+            label: const Text("Select Image"),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDrawingArea() {
+    return Center(
+      child: _isInpainting
+          ? const Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text("Erasing selected areas..."),
+              ],
+            )
+          : Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+                color: Colors.black.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              margin: const EdgeInsets.all(8),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: PolygonDrawingWidget(
+                  controller: _polygonController,
+                  child: _imageProvider != null
+                      ? Image(
+                          image: _imageProvider!,
+                          fit: BoxFit.contain,
+                        )
+                      : null,
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _buildControlPanel() {
+    return Card(
+      margin: const EdgeInsets.all(8.0),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Controls',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.start,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _pickImage,
+                  icon: const Icon(Icons.image, size: 18),
+                  label: const Text('Select Image'),
+                  style: ElevatedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _selectedImage != null ? _toggleDrawingMode : null,
+                  icon: Icon(
+                      _drawingMode == DrawingMode.draw
+                          ? Icons.edit_off
+                          : Icons.edit,
+                      size: 18),
+                  label: Text(_drawingMode == DrawingMode.draw
+                      ? "Stop Drawing"
+                      : "Start Drawing"),
+                  style: ElevatedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                    backgroundColor: _drawingMode == DrawingMode.draw
+                        ? Theme.of(context).colorScheme.errorContainer
+                        : Theme.of(context).colorScheme.secondaryContainer,
+                    foregroundColor: _drawingMode == DrawingMode.draw
+                        ? Theme.of(context).colorScheme.onErrorContainer
+                        : Theme.of(context).colorScheme.onSecondaryContainer,
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _polygonController.clearPolygons,
+                  icon: const Icon(Icons.clear_all, size: 18),
+                  label: const Text('Clear'),
+                  style: ElevatedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _polygonController.undoLastPolygon,
+                  icon: const Icon(Icons.undo, size: 18),
+                  label: const Text('Undo'),
+                  style: ElevatedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _inpaintWithPolygons,
+                  icon: const Icon(Icons.auto_fix_high, size: 18),
+                  label: const Text('Inpaint'),
+                  style: ElevatedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                    backgroundColor:
+                        Theme.of(context).colorScheme.primaryContainer,
+                    foregroundColor:
+                        Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _showDebugImages,
+                  icon: const Icon(Icons.bug_report, size: 18),
+                  label: const Text('Debug'),
+                  style: ElevatedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _showVisualization,
+                  icon: const Icon(Icons.visibility, size: 18),
+                  label: const Text('Visualize'),
+                  style: ElevatedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBar() {
+    return Container(
+      padding: const EdgeInsets.all(8.0),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
             children: [
+              const Icon(Icons.layers, size: 16),
+              const SizedBox(width: 4),
               Text("Polygons: ${_polygons.length}/$_maxPolygons"),
-              if (_imageSize != null)
-                Text(
-                    "Image: ${_imageSize!.width.toInt()}x${_imageSize!.height.toInt()}"),
-              Text(
-                  "Drawing Mode: ${_drawingMode == DrawingMode.draw ? 'Active' : 'Inactive'}"),
-              Text("Model: ${_isModelLoaded ? 'Loaded' : 'Not Loaded'}"),
             ],
           ),
-        ),
-      ],
+          if (_imageSize != null)
+            Row(
+              children: [
+                const Icon(Icons.photo_size_select_actual, size: 16),
+                const SizedBox(width: 4),
+                Text(
+                    "${_imageSize!.width.toInt()}x${_imageSize!.height.toInt()}"),
+              ],
+            ),
+          Row(
+            children: [
+              const Icon(Icons.edit, size: 16),
+              const SizedBox(width: 4),
+              Text(_drawingMode == DrawingMode.draw ? "Active" : "Inactive"),
+            ],
+          ),
+          Row(
+            children: [
+              Icon(
+                _isModelLoaded ? Icons.check_circle : Icons.error,
+                size: 16,
+                color: _isModelLoaded ? Colors.green : Colors.red,
+              ),
+              const SizedBox(width: 4),
+              Text(_isModelLoaded ? "Model Loaded" : "Model Not Loaded"),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
