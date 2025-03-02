@@ -61,13 +61,6 @@ class _InpaintingPageState extends State<InpaintingPage> {
     ],
   ];
 
-  // Configuration for the inpainting algorithm
-  final InpaintingConfig _config = const InpaintingConfig(
-    inputSize: 512,
-    expandPercentage: 0.3,
-    maxExpansionSize: 200,
-  );
-
   @override
   void initState() {
     super.initState();
@@ -232,7 +225,6 @@ class _InpaintingPageState extends State<InpaintingPage> {
       final outputImage = await InpaintingService.instance.inpaint(
         imageBytes,
         _demoPolygons,
-        config: _config,
       );
 
       setState(() {

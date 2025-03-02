@@ -5,13 +5,11 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'mappers/input_size.dart';
 import 'mappers/inpainting_config.dart';
 import 'services/mask_generation_service.dart';
 import 'services/onnx_model_service.dart';
 import 'services/polygon_inpainting_service.dart';
 
-export 'mappers/input_size.dart';
 export 'mappers/inpainting_config.dart';
 
 /// Main service for image inpainting
@@ -21,9 +19,6 @@ class InpaintingService {
   static final InpaintingService _instance = InpaintingService._internal();
 
   static InpaintingService get instance => _instance;
-
-  // LaMa model expects 512x512 input images by default
-  InputSize _modelInputSize = const InputSize(width: 512, height: 512);
 
   /// Initializes the ONNX environment and creates a session.
   ///
@@ -44,14 +39,6 @@ class InpaintingService {
       }
       rethrow;
     }
-  }
-
-  /// Get model input size
-  InputSize get modelInputSize => _modelInputSize;
-
-  /// Set model input size
-  void setModelInputSize(InputSize size) {
-    _modelInputSize = size;
   }
 
   /// Check if the model is already loaded
