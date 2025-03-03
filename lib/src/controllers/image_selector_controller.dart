@@ -11,8 +11,8 @@ enum DrawingMode {
   draw,
 }
 
-/// Controller for the polygon drawing widget
-class PolygonPainterController extends ChangeNotifier {
+/// Controller for the image selector widget
+class ImageSelectorController extends ChangeNotifier {
   /// Current drawing mode
   DrawingMode _drawingMode = DrawingMode.none;
 

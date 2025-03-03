@@ -6,8 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
-import '../mappers/bounding_box.dart';
-import '../mappers/inpainting_config.dart';
+import '../models/bounding_box.dart';
+import '../models/inpainting_config.dart';
 import 'image_processing_service.dart';
 import 'mask_generation_service.dart';
 import 'onnx_model_service.dart';

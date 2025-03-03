@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
-import '../mappers/model_init_data.dart';
+import '../models/model_init_data.dart';
 
 /// Service for handling ONNX model operations
 class OnnxModelService {

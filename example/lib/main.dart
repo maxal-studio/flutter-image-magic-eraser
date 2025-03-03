@@ -56,7 +56,6 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
   static final ImagePicker _imagePicker = ImagePicker();
   XFile? _selectedImage;
   Uint8List? _imageBytes;
-  Size? _imageSize;
   ImageProvider? _imageProvider;
 
   // Maximum number of polygons
@@ -68,7 +67,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
   bool _isLoadingModel = false;
 
   // Polygon drawing controller
-  late PolygonPainterController _polygonController;
+  late ImageSelectorController _imageSelectorController;
   DrawingMode _drawingMode = DrawingMode.none;
   List<List<Map<String, double>>> _polygons = [];
 
@@ -77,9 +76,9 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
     super.initState();
 
     // Initialize polygon controller
-    _polygonController = PolygonPainterController();
-    _polygonController.onPolygonsChanged = _onPolygonsChanged;
-    _polygonController.maxPolygons = _maxPolygons;
+    _imageSelectorController = ImageSelectorController();
+    _imageSelectorController.onPolygonsChanged = _onPolygonsChanged;
+    _imageSelectorController.maxPolygons = _maxPolygons;
 
     // Check if model is already loaded
     _isModelLoaded = InpaintingService.instance.isModelLoaded();
@@ -91,7 +90,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
 
   @override
   void dispose() {
-    _polygonController.dispose();
+    _imageSelectorController.dispose();
     super.dispose();
   }
 
@@ -138,10 +137,9 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
       setState(() {
         _selectedImage = file;
         _imageBytes = bytes;
-        _imageSize = Size(image.width.toDouble(), image.height.toDouble());
         _imageProvider = MemoryImage(bytes);
         // Clear existing polygons
-        _polygonController.clearPolygons();
+        _imageSelectorController.clearPolygons();
       });
 
       _log('Image loaded: ${image.width}x${image.height}');
@@ -166,13 +164,13 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
       _drawingMode = _drawingMode == DrawingMode.none
           ? DrawingMode.draw
           : DrawingMode.none;
-      _polygonController.drawingMode = _drawingMode;
+      _imageSelectorController.drawingMode = _drawingMode;
     });
   }
 
   /// Inpaint with polygons
   Future<void> _inpaintWithPolygons() async {
-    if (_imageBytes == null || _polygonController.polygons.isEmpty) {
+    if (_imageBytes == null || _imageSelectorController.polygons.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please select an image and draw at least one polygon'),
@@ -187,7 +185,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
 
     try {
       // Convert polygons to the format expected by the inpainting service
-      final polygonsData = _polygonController.polygons
+      final polygonsData = _imageSelectorController.polygons
           .map((polygon) => polygon.toInpaintingFormat())
           .toList();
 
@@ -204,27 +202,13 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
       if (!mounted) return;
 
       // Clear all polygons
-      _polygonController.clearPolygons();
+      _imageSelectorController.clearPolygons();
 
       setState(() {
         _imageBytes = outputBytes;
         _imageProvider = MemoryImage(outputBytes);
         _isInpainting = false;
       });
-
-      // Update image size after inpainting
-      if (_imageBytes != null) {
-        final decodedImage = await decodeImageFromList(_imageBytes!);
-
-        if (!mounted) return;
-
-        setState(() {
-          _imageSize = Size(
-            decodedImage.width.toDouble(),
-            decodedImage.height.toDouble(),
-          );
-        });
-      }
     } catch (e) {
       if (!mounted) return;
 
@@ -243,7 +227,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
 
   /// View debug images
   void _showDebugImages() {
-    if (_imageBytes == null || _polygonController.polygons.isEmpty) {
+    if (_imageBytes == null || _imageSelectorController.polygons.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please select an image and draw at least one polygon'),
@@ -253,7 +237,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
     }
 
     // Convert polygons to the format expected by the debug images page
-    final polygonsData = _polygonController.polygons
+    final polygonsData = _imageSelectorController.polygons
         .map((polygon) => polygon.toInpaintingFormat())
         .toList();
 
@@ -270,7 +254,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
 
   /// Show visualization
   void _showVisualization() {
-    if (_imageBytes == null || _polygonController.polygons.isEmpty) {
+    if (_imageBytes == null || _imageSelectorController.polygons.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please select an image and draw at least one polygon'),
@@ -280,7 +264,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
     }
 
     // Convert polygons to the format expected by the visualization page
-    final polygonsData = _polygonController.polygons
+    final polygonsData = _imageSelectorController.polygons
         .map((polygon) => polygon.toInpaintingFormat())
         .toList();
 
@@ -417,8 +401,8 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
               margin: const EdgeInsets.all(8),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: PolygonDrawingWidget(
-                  controller: _polygonController,
+                child: ImageMaskSelector(
+                  controller: _imageSelectorController,
                   child: _imageProvider != null
                       ? Image(
                           image: _imageProvider!,
@@ -439,11 +423,6 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Controls',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -475,14 +454,14 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
                     textStyle: const TextStyle(fontSize: 13),
                     backgroundColor: _drawingMode == DrawingMode.draw
                         ? Theme.of(context).colorScheme.errorContainer
-                        : Theme.of(context).colorScheme.secondaryContainer,
+                        : null,
                     foregroundColor: _drawingMode == DrawingMode.draw
                         ? Theme.of(context).colorScheme.onErrorContainer
-                        : Theme.of(context).colorScheme.onSecondaryContainer,
+                        : null,
                   ),
                 ),
                 ElevatedButton.icon(
-                  onPressed: _polygonController.clearPolygons,
+                  onPressed: _imageSelectorController.clearPolygons,
                   icon: const Icon(Icons.clear_all, size: 18),
                   label: const Text('Clear'),
                   style: ElevatedButton.styleFrom(
@@ -492,7 +471,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
                   ),
                 ),
                 ElevatedButton.icon(
-                  onPressed: _polygonController.undoLastPolygon,
+                  onPressed: _imageSelectorController.undoLastPolygon,
                   icon: const Icon(Icons.undo, size: 18),
                   label: const Text('Undo'),
                   style: ElevatedButton.styleFrom(
@@ -554,34 +533,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
             children: [
               const Icon(Icons.layers, size: 16),
               const SizedBox(width: 4),
-              Text("Polygons: ${_polygons.length}/$_maxPolygons"),
-            ],
-          ),
-          if (_imageSize != null)
-            Row(
-              children: [
-                const Icon(Icons.photo_size_select_actual, size: 16),
-                const SizedBox(width: 4),
-                Text(
-                    "${_imageSize!.width.toInt()}x${_imageSize!.height.toInt()}"),
-              ],
-            ),
-          Row(
-            children: [
-              const Icon(Icons.edit, size: 16),
-              const SizedBox(width: 4),
-              Text(_drawingMode == DrawingMode.draw ? "Active" : "Inactive"),
-            ],
-          ),
-          Row(
-            children: [
-              Icon(
-                _isModelLoaded ? Icons.check_circle : Icons.error,
-                size: 16,
-                color: _isModelLoaded ? Colors.green : Colors.red,
-              ),
-              const SizedBox(width: 4),
-              Text(_isModelLoaded ? "Model Loaded" : "Model Not Loaded"),
+              Text("Selections: ${_polygons.length}/$_maxPolygons"),
             ],
           ),
         ],

@@ -5,13 +5,13 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'mappers/inpainting_config.dart';
+import 'models/inpainting_config.dart';
 import 'services/mask_generation_service.dart';
 import 'services/onnx_model_service.dart';
 import 'services/polygon_inpainting_service.dart';
 import 'services/polygon_processing_service.dart';
 
-export 'mappers/inpainting_config.dart';
+export 'models/inpainting_config.dart';
 
 /// Main service for image inpainting
 class InpaintingService {

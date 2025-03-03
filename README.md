@@ -6,7 +6,7 @@ A Flutter package that removes objects from images using machine learning (LaMa 
 
 ## 🌟 Features
 
-- Remove objects from images using polygon selection or mask images
+- Remove objects from images using polygon selections
 - Works entirely offline, ensuring privacy and reliability
 - Lightweight and optimized for efficient performance
 - Simple and seamless integration with Flutter projects
@@ -100,25 +100,22 @@ final Uint8List outputBytes = byteData!.buffer.asUint8List();
 Image.memory(outputBytes)
 ```
 
-### Using the PolygonDrawingWidget
+### Using the ImageMaskSelector
 
 The package includes an interactive polygon drawing widget that makes it easy for users to select areas to inpaint:
 
 ```dart
 // Create a controller for the polygon drawing widget
-final polygonController = PolygonPainterController();
+final imageSelectorController = ImageSelectorController();
 
 // Set up the widget in your UI
-PolygonDrawingWidget(
-  controller: polygonController,
-  child: Image.memory(
-    imageBytes,
-    fit: BoxFit.contain,
-  ),
+ImageMaskSelector(
+  controller: imageSelectorController,
+  child: Image.memory(imageBytes),
 ),
 
 // When ready to inpaint, get the polygons from the controller
-final polygonsData = polygonController.polygons
+final polygonsData = imageSelectorController.polygons
     .map((polygon) => polygon.toInpaintingFormat())
     .toList();
 

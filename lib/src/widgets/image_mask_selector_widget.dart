@@ -1,16 +1,16 @@
 import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 
-import '../controllers/polygon_painter_controller.dart';
+import '../controllers/image_selector_controller.dart';
 import '../painters/polygon_painter.dart';
 
 /// A widget that allows drawing polygons on top of an image
-class PolygonDrawingWidget extends StatefulWidget {
+class ImageMaskSelector extends StatefulWidget {
   /// The child widget (must be an Image or null)
   final Image? child;
 
   /// The controller for the polygon painter
-  final PolygonPainterController controller;
+  final ImageSelectorController controller;
 
   /// Minimum distance between points to add a new point
   final double minDistance;
@@ -19,7 +19,7 @@ class PolygonDrawingWidget extends StatefulWidget {
   final bool autoCloseOnPointerUp;
 
   /// Creates a new polygon drawing widget
-  const PolygonDrawingWidget({
+  const ImageMaskSelector({
     super.key,
     this.child,
     required this.controller,
@@ -28,10 +28,10 @@ class PolygonDrawingWidget extends StatefulWidget {
   });
 
   @override
-  State<PolygonDrawingWidget> createState() => _PolygonDrawingWidgetState();
+  State<ImageMaskSelector> createState() => _ImageMaskSelectorState();
 }
 
-class _PolygonDrawingWidgetState extends State<PolygonDrawingWidget> {
+class _ImageMaskSelectorState extends State<ImageMaskSelector> {
   // Drawing state
   bool _isDrawing = false;
 
@@ -56,7 +56,7 @@ class _PolygonDrawingWidgetState extends State<PolygonDrawingWidget> {
   }
 
   @override
-  void didUpdateWidget(PolygonDrawingWidget oldWidget) {
+  void didUpdateWidget(ImageMaskSelector oldWidget) {
     super.didUpdateWidget(oldWidget);
 
     // Check if the image has changed
@@ -81,7 +81,7 @@ class _PolygonDrawingWidgetState extends State<PolygonDrawingWidget> {
   /// Log debug information
   void _log(String message) {
     if (_debug) {
-      developer.log(message, name: 'PolygonDrawingWidget');
+      developer.log(message, name: 'ImageMaskSelector');
     }
   }
 
