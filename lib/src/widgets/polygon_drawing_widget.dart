@@ -56,6 +56,23 @@ class _PolygonDrawingWidgetState extends State<PolygonDrawingWidget> {
   }
 
   @override
+  void didUpdateWidget(PolygonDrawingWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Check if the image has changed
+    if (widget.child?.image != oldWidget.child?.image) {
+      _log('Image changed, updating sizes and calculations');
+      // Reset size-related variables
+      _imageSize = null;
+      _displayRect = null;
+      // Schedule size update on next frame
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _updateSizes();
+      });
+    }
+  }
+
+  @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
@@ -71,6 +88,9 @@ class _PolygonDrawingWidgetState extends State<PolygonDrawingWidget> {
   /// Update container and image sizes
   void _updateSizes() {
     if (!mounted) return;
+
+    // Reset the drawing state when updating sizes
+    _isDrawing = false;
 
     // Get the container size
     final RenderBox? containerBox = context.findRenderObject() as RenderBox?;
@@ -91,6 +111,8 @@ class _PolygonDrawingWidgetState extends State<PolygonDrawingWidget> {
         // For network or memory images, we need to wait for the image to load
         widget.child!.image.resolve(const ImageConfiguration()).addListener(
           ImageStreamListener((ImageInfo info, bool _) {
+            if (!mounted) return; // Add mounted check
+
             setState(() {
               _imageSize = Size(
                 info.image.width.toDouble(),
@@ -98,6 +120,9 @@ class _PolygonDrawingWidgetState extends State<PolygonDrawingWidget> {
               );
               _log('Image size from Image widget: $_imageSize');
               _calculateDisplayRect();
+
+              // Stop any ongoing drawing when image size changes
+              _isDrawing = false;
 
               // Update existing polygons to maintain their relative positions
               _updatePolygonPositions();
@@ -245,6 +270,12 @@ class _PolygonDrawingWidgetState extends State<PolygonDrawingWidget> {
   /// Handle pointer down events
   void _onPointerDown(PointerDownEvent event) {
     if (widget.controller.drawingMode != DrawingMode.draw) return;
+
+    // Don't allow drawing if image size or display rect isn't calculated yet
+    if (_imageSize == null || _displayRect == null) {
+      _log('Cannot start drawing: image size or display rect not ready');
+      return;
+    }
 
     // Only start drawing if the point is within the image bounds
     if (!_isPointInImage(event.localPosition)) {
