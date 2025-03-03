@@ -57,9 +57,68 @@ import 'package:image_magic_eraser/image_magic_eraser.dart';
 
 // Initialize the service with the model path
 await InpaintingService.instance.initializeOrt('assets/models/lama_fp32.onnx');
-
 ```
 
+### Model Loading State Management
+
+The package provides a way to track the model loading state, which is particularly useful since model loading can take some time depending on the device. You can listen to state changes and update your UI accordingly:
+
+```dart
+// Get current loading state
+ModelLoadingState currentState = InpaintingService.instance.modelLoadingState;
+
+// Listen to state changes
+InpaintingService.instance.modelLoadingStateStream.listen((state) {
+  switch (state) {
+    case ModelLoadingState.notLoaded:
+      // Model needs to be loaded
+      break;
+    case ModelLoadingState.loading:
+      // Show loading indicator
+      break;
+    case ModelLoadingState.loaded:
+      // Model is ready to use
+      break;
+    case ModelLoadingState.error:
+      // Show error message
+      break;
+  }
+});
+
+// Example usage in a StatefulWidget
+class _MyWidgetState extends State<MyWidget> {
+  StreamSubscription<ModelLoadingState>? _modelLoadingSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    // Subscribe to model loading state changes
+    _modelLoadingSubscription = 
+        InpaintingService.instance.modelLoadingStateStream.listen((state) {
+      setState(() {
+        // Update UI based on state
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _modelLoadingSubscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final modelState = InpaintingService.instance.modelLoadingState;
+    
+    return modelState == ModelLoadingState.loading
+        ? const CircularProgressIndicator()
+        : modelState == ModelLoadingState.loaded
+            ? const Text('Ready to use')
+            : const Text('Model not loaded');
+  }
+}
+```
 
 ### Method : Inpainting with Polygons 
 

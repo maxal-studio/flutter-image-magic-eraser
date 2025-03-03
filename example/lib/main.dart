@@ -1,6 +1,7 @@
 import 'dart:developer';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:image_magic_eraser/image_magic_eraser.dart';
@@ -62,9 +63,8 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
   final int _maxPolygons = 5;
 
   // Inpainting state
-  bool _isModelLoaded = false;
   bool _isInpainting = false;
-  bool _isLoadingModel = false;
+  StreamSubscription<ModelLoadingState>? _modelLoadingSubscription;
 
   // Polygon drawing controller
   late ImageSelectorController _imageSelectorController;
@@ -80,44 +80,37 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
     _imageSelectorController.onPolygonsChanged = _onPolygonsChanged;
     _imageSelectorController.maxPolygons = _maxPolygons;
 
-    // Check if model is already loaded
-    _isModelLoaded = InpaintingService.instance.isModelLoaded();
+    // Subscribe to model loading state changes
+    _modelLoadingSubscription =
+        InpaintingService.instance.modelLoadingStateStream.listen((state) {
+      if (!mounted) return;
+      debugPrint('Model loading state: $state');
+      setState(() {});
+    });
 
-    if (!_isModelLoaded) {
+    // Load model if not already loaded
+    if (InpaintingService.instance.modelLoadingState ==
+        ModelLoadingState.notLoaded) {
       _loadModel();
     }
   }
 
   @override
   void dispose() {
+    _modelLoadingSubscription?.cancel();
     _imageSelectorController.dispose();
     super.dispose();
   }
 
   /// Load the inpainting model
   Future<void> _loadModel() async {
-    setState(() {
-      _isLoadingModel = true;
-    });
-
     try {
       await InpaintingService.instance
           .initializeOrt('assets/models/lama_fp32.onnx');
-
       if (!mounted) return;
-
-      setState(() {
-        _isModelLoaded = true;
-        _isLoadingModel = false;
-      });
       _showSuccess('Model loaded successfully');
     } catch (e) {
       if (!mounted) return;
-
-      setState(() {
-        _isModelLoaded = false;
-        _isLoadingModel = false;
-      });
       _showError('Error loading model: $e');
     }
   }
@@ -309,12 +302,14 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
 
   @override
   Widget build(BuildContext context) {
+    final modelState = InpaintingService.instance.modelLoadingState;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Image Magic Eraser"),
         centerTitle: true,
       ),
-      body: _isLoadingModel
+      body: modelState == ModelLoadingState.loading
           ? const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,

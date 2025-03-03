@@ -18,12 +18,32 @@ class OnnxModelService {
   /// The ONNX session used for inference
   OrtSession? _session;
 
+  /// Stream controller for broadcasting model loading state changes
+  final _stateController = StreamController<ModelLoadingState>.broadcast();
+
+  /// Current state of model loading
+  ModelLoadingState _currentState = ModelLoadingState.notLoaded;
+
+  /// Stream of model loading state changes
+  Stream<ModelLoadingState> get stateStream => _stateController.stream;
+
+  /// Current state of model loading
+  ModelLoadingState get currentState => _currentState;
+
+  /// Updates the current state and broadcasts it to listeners
+  void _setState(ModelLoadingState newState) {
+    _currentState = newState;
+    _stateController.add(newState);
+  }
+
   /// Initializes the ONNX environment and creates a session
   ///
   /// This method should be called once before using the model for inference
   /// It runs in an isolate to prevent UI freezing
   Future<void> initializeModel(String modelPath) async {
     try {
+      _setState(ModelLoadingState.loading);
+
       // Load the model bytes in the main isolate
       final rawAssetFile = await rootBundle.load(modelPath);
       final bytes = rawAssetFile.buffer.asUint8List();
@@ -39,11 +59,14 @@ class OnnxModelService {
       // The session will not be null as the _createSession method will throw an exception if it fails
       _session = session;
 
+      _setState(ModelLoadingState.loaded);
+
       if (kDebugMode) {
         log('ONNX session created successfully in isolate.',
             name: "OnnxModelService");
       }
     } catch (e) {
+      _setState(ModelLoadingState.error);
       if (kDebugMode) {
         log('Error initializing ONNX model: $e',
             name: "OnnxModelService", error: e);
@@ -105,9 +128,11 @@ class OnnxModelService {
     if (_session != null) {
       _session!.release();
       _session = null;
+      _setState(ModelLoadingState.notLoaded);
       if (kDebugMode) {
         log('ONNX session released.', name: "OnnxModelService");
       }
     }
+    _stateController.close();
   }
 }

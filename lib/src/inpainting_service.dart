@@ -6,12 +6,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'models/inpainting_config.dart';
+import 'models/model_init_data.dart';
 import 'services/mask_generation_service.dart';
 import 'services/onnx_model_service.dart';
 import 'services/polygon_inpainting_service.dart';
 import 'services/polygon_processing_service.dart';
 
 export 'models/inpainting_config.dart';
+export 'models/model_init_data.dart';
 
 /// Main service for image inpainting
 class InpaintingService {
@@ -20,6 +22,14 @@ class InpaintingService {
   static final InpaintingService _instance = InpaintingService._internal();
 
   static InpaintingService get instance => _instance;
+
+  /// Get the current model loading state
+  ModelLoadingState get modelLoadingState =>
+      OnnxModelService.instance.currentState;
+
+  /// Get the stream of model loading state changes
+  Stream<ModelLoadingState> get modelLoadingStateStream =>
+      OnnxModelService.instance.stateStream;
 
   /// Initializes the ONNX environment and creates a session.
   ///
