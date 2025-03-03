@@ -15,7 +15,7 @@ A Flutter package that removes objects from images using machine learning (LaMa 
 ---
 
 ## 🔭 Demo
-![Demo](./doc/demo.jpg)
+![Demo](./doc/demo.gif)
 
 ## Getting Started
 
