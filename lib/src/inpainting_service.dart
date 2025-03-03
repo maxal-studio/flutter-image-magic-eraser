@@ -9,6 +9,7 @@ import 'mappers/inpainting_config.dart';
 import 'services/mask_generation_service.dart';
 import 'services/onnx_model_service.dart';
 import 'services/polygon_inpainting_service.dart';
+import 'services/polygon_processing_service.dart';
 
 export 'mappers/inpainting_config.dart';
 
@@ -87,13 +88,21 @@ class InpaintingService {
     }
 
     try {
+      // Process polygons before inpainting
+      final processedPolygons =
+          PolygonProcessingService.instance.processPolygons(polygons);
+      if (processedPolygons.isEmpty) {
+        throw Exception(
+            "No valid polygons to process after filtering and merging.");
+      }
+
       // Use a default configuration with no feathering if none is provided
       final effectiveConfig = config ?? const InpaintingConfig();
 
       // Use the PolygonInpaintingService to process the polygons
       return await PolygonInpaintingService.instance.inpaintPolygons(
         imageBytes,
-        polygons,
+        processedPolygons,
         config: effectiveConfig,
       );
     } catch (e) {
@@ -132,10 +141,13 @@ class InpaintingService {
     Color fillColor = Colors.white,
     bool drawOutline = false,
   }) async {
+    // Process polygons before generating mask
+    final processedPolygons =
+        PolygonProcessingService.instance.processPolygons(polygons);
     final decodedImage = await decodeImageFromList(image);
 
     return MaskGenerationService.instance.generateDebugMask(
-      polygons,
+      processedPolygons,
       decodedImage.width,
       decodedImage.height,
       strokeWidth: strokeWidth,
@@ -158,9 +170,12 @@ class InpaintingService {
     List<List<Map<String, double>>> polygons, {
     InpaintingConfig? config,
   }) async {
+    // Process polygons before visualization
+    final processedPolygons =
+        PolygonProcessingService.instance.processPolygons(polygons);
     return await PolygonInpaintingService.instance.generateDebugVisualization(
       imageBytes,
-      polygons,
+      processedPolygons,
       config: config,
     );
   }
@@ -192,9 +207,12 @@ class InpaintingService {
     }
 
     try {
+      // Process polygons before generating debug images
+      final processedPolygons =
+          PolygonProcessingService.instance.processPolygons(polygons);
       return await PolygonInpaintingService.instance.generateDebugImages(
         imageBytes,
-        polygons,
+        processedPolygons,
         config: config,
       );
     } catch (e) {

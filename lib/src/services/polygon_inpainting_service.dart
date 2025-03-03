@@ -56,14 +56,6 @@ class PolygonInpaintingService {
       // Process each polygon
       ui.Image resultImage = originalImage;
       for (final polygon in polygons) {
-        if (polygon.length < 3) {
-          if (kDebugMode) {
-            log('Skipping polygon with less than 3 points',
-                name: 'PolygonInpaintingService');
-          }
-          continue;
-        }
-
         // Inpaint the polygon
         resultImage = await _inpaintPolygon(resultImage, polygon, cfg);
       }
@@ -491,14 +483,6 @@ class PolygonInpaintingService {
       for (int polyIndex = 0; polyIndex < polygons.length; polyIndex++) {
         final polygon = polygons[polyIndex];
 
-        if (polygon.length < 3) {
-          if (kDebugMode) {
-            log('Skipping polygon $polyIndex with less than 3 points',
-                name: 'PolygonInpaintingService');
-          }
-          continue;
-        }
-
         // Store the image before processing this polygon
         debugImages['before_polygon_$polyIndex'] = currentImage;
 
@@ -652,10 +636,6 @@ class PolygonInpaintingService {
       // Draw each polygon and its bounding box
       for (int i = 0; i < polygons.length; i++) {
         final polygon = polygons[i];
-
-        if (polygon.length < 3) {
-          continue;
-        }
 
         // Draw the polygon
         final polygonPath = Path();
