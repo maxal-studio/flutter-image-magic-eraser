@@ -38,6 +38,9 @@ flutter pub get
 
 1. Download the LaMa model file (`lama_fp32.onnx`) from this url [Carve/LaMa-ONNX](https://huggingface.co/Carve/LaMa-ONNX/tree/main) and place it in your assets folder.
 
+> **Note:** The LaMa model file is quite large (~200MB) and will significantly increase your app size. If you have experience with model optimization and can provide a smaller ONNX model suitable for mobile image inpainting, we'd love to hear from you! Please reach out to us at info@max.al or dajanvulaj@gmail.com. We're actively looking for optimized alternatives to improve the package's footprint.
+
+
 2. Update your `pubspec.yaml` to include the model:
 
 ```yaml
