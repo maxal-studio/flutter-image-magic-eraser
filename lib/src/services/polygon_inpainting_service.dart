@@ -443,17 +443,6 @@ class PolygonInpaintingService {
         originalImage, patch, box, polygon, '_blendPatchIntoImage');
   }
 
-  /// Generates a visualization of how the patch would be blended
-  Future<ui.Image> _createBlendVisualization(
-    ui.Image originalImage,
-    ui.Image patch,
-    BoundingBox box,
-    List<Map<String, double>> polygon, // Polygon for clipping
-  ) async {
-    return _blendPatchWithinPolygon(
-        originalImage, patch, box, polygon, '_createBlendVisualization');
-  }
-
   /// Generates debug images for each step of the inpainting process
   Future<Map<String, ui.Image>> generateDebugImages(
     Uint8List imageBytes,
@@ -482,9 +471,6 @@ class PolygonInpaintingService {
 
       for (int polyIndex = 0; polyIndex < polygons.length; polyIndex++) {
         final polygon = polygons[polyIndex];
-
-        // Store the image before processing this polygon
-        debugImages['before_polygon_$polyIndex'] = currentImage;
 
         // 1. Compute bounding box around the polygon
         final bbox = BoundingBox.fromPoints(polygon);
@@ -567,20 +553,10 @@ class PolygonInpaintingService {
               expandedBox.width,
               expandedBox.height,
             );
-            debugImages['inpainted_patch_resized_$polyIndex'] = finalPatch;
           } else {
             finalPatch = inpaintedPatch;
           }
-          debugImages['inpainted_patch_$polyIndex'] = finalPatch;
-
-          // 6. Create a visualization of how the patch would be blended
-          final blendVisualization = await _createBlendVisualization(
-            currentImage,
-            finalPatch,
-            expandedBox,
-            polygon,
-          );
-          debugImages['blend_visualization_$polyIndex'] = blendVisualization;
+          debugImages['inpainted_patch_resized_$polyIndex'] = finalPatch;
 
           // 7. Blend the patch into the current image
           currentImage = await _blendPatchIntoImage(
@@ -589,9 +565,6 @@ class PolygonInpaintingService {
             expandedBox,
             polygon,
           );
-
-          // Store the result after processing this polygon
-          debugImages['after_polygon_$polyIndex'] = currentImage;
         } catch (e) {
           if (kDebugMode) {
             log('Error generating inpainted patch for polygon $polyIndex: $e',
