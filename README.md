@@ -62,6 +62,13 @@ import 'package:image_magic_eraser/image_magic_eraser.dart';
 await InpaintingService.instance.initializeOrt('assets/models/lama_fp32.onnx');
 ```
 
+> **Attention:** Update these `Xcode` Settings under `Runner` / `Build Settings` / `Deployment`  
+
+`Strip Linked Product` : `No`  
+`Strip Style` : `Non-Global Symbols`  
+
+
+
 ### Model Loading State Management
 
 The package provides a way to track the model loading state, which is particularly useful since model loading can take some time depending on the device. You can listen to state changes and update your UI accordingly:
@@ -164,10 +171,10 @@ Image.memory(outputBytes)
 
 ### Using the ImageMaskSelector
 
-The package includes an interactive polygon drawing widget that makes it easy for users to select areas to inpaint:
+The package includes an interactive image selector widget that makes it easy for users to select areas to inpaint:
 
 ```dart
-// Create a controller for the polygon drawing widget
+// Create a controller for the image selector widget
 final imageSelectorController = ImageSelectorController();
 
 // Set up the widget in your UI
@@ -202,7 +209,7 @@ final debugImages = await InpaintingService.instance.generateDebugImages(
 // Display the debug images
 // Each key in the map represents a step in the process:
 // 'original', 'cropped', 'mask', 'resized_image', 'resized_mask',
-// 'inpainted_patch_raw', 'inpainted_patch_resized', 'inpainted_patch', 'blended'
+// 'inpainted_patch_raw', 'inpainted_patch_resized', 'inpainted_patch', 'final_result'
 RawImage(
   image: debugImages['mask'],
   fit: BoxFit.contain,
@@ -215,7 +222,6 @@ Check out the Example app in the repository for a full implementation.
 
 ## 📝 Notes
 
-- The LaMa model works best with images that have a clear foreground and background.
 - For optimal results, ensure that your polygons completely cover the object you want to remove.
 - Processing large images may take time, especially on older devices.
 - The quality of inpainting depends on the complexity of the image and the area being inpainted.
