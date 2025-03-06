@@ -28,8 +28,26 @@ class _DebugImagesPageState extends State<DebugImagesPage> {
     _loadDebugImages();
   }
 
+  @override
+  void dispose() {
+    // Dispose of debug images when leaving the page
+    _disposeDebugImages();
+    super.dispose();
+  }
+
+  /// Dispose of debug images to free up memory
+  void _disposeDebugImages() {
+    if (_debugImages != null) {
+      InpaintingService.instance.disposeDebugImages(_debugImages!);
+      _debugImages = null;
+    }
+  }
+
   Future<void> _loadDebugImages() async {
     try {
+      // Dispose any existing images first
+      _disposeDebugImages();
+
       setState(() {
         _isLoading = true;
         _error = null;

@@ -44,6 +44,10 @@ class _ImageMaskSelectorState extends State<ImageMaskSelector> {
   // Debug mode
   final bool _debug = false;
 
+  // Keep track of the current image stream subscription
+  ImageStreamListener? _currentImageListener;
+  ImageStream? _currentImageStream;
+
   @override
   void initState() {
     super.initState();
@@ -62,9 +66,14 @@ class _ImageMaskSelectorState extends State<ImageMaskSelector> {
     // Check if the image has changed
     if (widget.child?.image != oldWidget.child?.image) {
       _log('Image changed, updating sizes and calculations');
+
+      // Clean up old image stream listener if exists
+      _cancelImageStreamListener();
+
       // Reset size-related variables
       _imageSize = null;
       _displayRect = null;
+
       // Schedule size update on next frame
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _updateSizes();
@@ -74,8 +83,19 @@ class _ImageMaskSelectorState extends State<ImageMaskSelector> {
 
   @override
   void dispose() {
+    _cancelImageStreamListener();
     widget.controller.removeListener(_onControllerChanged);
     super.dispose();
+  }
+
+  /// Cancel the current image stream listener
+  void _cancelImageStreamListener() {
+    if (_currentImageStream != null && _currentImageListener != null) {
+      _log('Cancelling previous image stream listener');
+      _currentImageStream!.removeListener(_currentImageListener!);
+      _currentImageStream = null;
+      _currentImageListener = null;
+    }
   }
 
   /// Log debug information
@@ -108,27 +128,34 @@ class _ImageMaskSelectorState extends State<ImageMaskSelector> {
 
       // Try to get the actual image dimensions from the Image widget
       if (widget.child?.image != null) {
+        // Clean up any existing listener
+        _cancelImageStreamListener();
+
         // For network or memory images, we need to wait for the image to load
-        widget.child!.image.resolve(const ImageConfiguration()).addListener(
-          ImageStreamListener((ImageInfo info, bool _) {
-            if (!mounted) return; // Add mounted check
+        final ImageStream imageStream =
+            widget.child!.image.resolve(const ImageConfiguration());
+        _currentImageStream = imageStream;
 
-            setState(() {
-              _imageSize = Size(
-                info.image.width.toDouble(),
-                info.image.height.toDouble(),
-              );
-              _log('Image size from Image widget: $_imageSize');
-              _calculateDisplayRect();
+        _currentImageListener = ImageStreamListener((ImageInfo info, bool _) {
+          if (!mounted) return;
 
-              // Stop any ongoing drawing when image size changes
-              _isDrawing = false;
+          setState(() {
+            _imageSize = Size(
+              info.image.width.toDouble(),
+              info.image.height.toDouble(),
+            );
+            _log('Image size from Image widget: $_imageSize');
+            _calculateDisplayRect();
 
-              // Update existing polygons to maintain their relative positions
-              _updatePolygonPositions();
-            });
-          }),
-        );
+            // Stop any ongoing drawing when image size changes
+            _isDrawing = false;
+
+            // Update existing polygons to maintain their relative positions
+            _updatePolygonPositions();
+          });
+        });
+
+        imageStream.addListener(_currentImageListener!);
       } else {
         _log('Image is null, using widget size as fallback');
         _imageSize = imageWidgetSize;

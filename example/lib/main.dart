@@ -99,7 +99,23 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
   void dispose() {
     _modelLoadingSubscription?.cancel();
     _imageSelectorController.dispose();
+    _clearImageResources();
     super.dispose();
+  }
+
+  /// Clear image resources to prevent memory leaks
+  void _clearImageResources() {
+    // Reset image provider to release memory
+    if (_imageProvider != null) {
+      if (_imageProvider is MemoryImage) {
+        (_imageProvider as MemoryImage).evict();
+      }
+      _imageProvider = null;
+    }
+
+    // Clear image bytes reference
+    _imageBytes = null;
+    _selectedImage = null;
   }
 
   /// Load the inpainting model
@@ -121,6 +137,9 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
       final file = await _imagePicker.pickImage(source: ImageSource.gallery);
       if (file == null) return;
 
+      // Clear previous image resources
+      _clearImageResources();
+
       // Load the image and get its dimensions
       final bytes = await File(file.path).readAsBytes();
       final image = await decodeImageFromList(bytes);
@@ -136,6 +155,9 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
       });
 
       _log('Image loaded: ${image.width}x${image.height}');
+
+      // Dispose the decoded image as we don't need it anymore
+      image.dispose();
     } on Exception catch (e) {
       if (!mounted) return;
       _showError('Error picking image: $e');
@@ -190,12 +212,21 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
       // Convert ui.Image to Uint8List
       final ByteData? byteData =
           await result.toByteData(format: ui.ImageByteFormat.png);
+
+      // Dispose the result image now that we have the byte data
+      result.dispose();
+
       final Uint8List outputBytes = byteData!.buffer.asUint8List();
 
       if (!mounted) return;
 
       // Clear all polygons
       _imageSelectorController.clearPolygons();
+
+      // Clear previous image provider
+      if (_imageProvider != null && _imageProvider is MemoryImage) {
+        (_imageProvider as MemoryImage).evict();
+      }
 
       setState(() {
         _imageBytes = outputBytes;

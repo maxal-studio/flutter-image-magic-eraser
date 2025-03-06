@@ -28,8 +28,26 @@ class _VisualizationPageState extends State<VisualizationPage> {
     _loadVisualization();
   }
 
+  @override
+  void dispose() {
+    // Dispose of visualization image
+    _disposeVisualization();
+    super.dispose();
+  }
+
+  /// Dispose of visualization image to free up memory
+  void _disposeVisualization() {
+    if (_visualization != null) {
+      _visualization!.dispose();
+      _visualization = null;
+    }
+  }
+
   Future<void> _loadVisualization() async {
     try {
+      // Dispose any existing visualization first
+      _disposeVisualization();
+
       setState(() {
         _isLoading = true;
         _error = null;

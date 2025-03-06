@@ -8,6 +8,7 @@ import 'package:onnxruntime/onnxruntime.dart';
 
 import '../models/bounding_box.dart';
 import '../models/inpainting_config.dart';
+import '../utils/image_disposal_util.dart';
 import 'image_processing_service.dart';
 import 'mask_generation_service.dart';
 import 'onnx_model_service.dart';
@@ -56,10 +57,17 @@ class PolygonInpaintingService {
       // Process each polygon
       ui.Image resultImage = originalImage;
       for (final polygon in polygons) {
+        ui.Image previousImage = resultImage;
         // Inpaint the polygon
         resultImage = await _inpaintPolygon(resultImage, polygon, cfg);
+
+        // Dispose previous iteration image if not the original
+        if (previousImage != originalImage) {
+          ImageDisposalUtil.disposeImage(previousImage);
+        }
       }
 
+      // Return the final result (this will be disposed by the caller)
       return resultImage;
     } catch (e) {
       if (kDebugMode) {
@@ -87,6 +95,14 @@ class PolygonInpaintingService {
     List<Map<String, double>> polygon,
     InpaintingConfig config,
   ) async {
+    ui.Image? croppedImage;
+    ui.Image? maskImage;
+    ui.Image? resizedImage;
+    ui.Image? resizedMask;
+    ui.Image? inpaintedPatch;
+    ui.Image? finalPatch;
+    ui.Image? result;
+
     try {
       // 1. Compute bounding box around the polygon
       final bbox = BoundingBox.fromPoints(polygon);
@@ -112,7 +128,7 @@ class PolygonInpaintingService {
       }
 
       // 3. Crop the original image using the adjusted bbox
-      final croppedImage = await _cropImage(
+      croppedImage = await _cropImage(
         image,
         expandedBox,
       );
@@ -120,7 +136,7 @@ class PolygonInpaintingService {
       // Generate mask for the polygon
       final polygonRelativeToBox = _adjustPolygonToBox(polygon, expandedBox);
 
-      final maskImage = await MaskGenerationService.instance.generateMask(
+      maskImage = await MaskGenerationService.instance.generateMask(
         [polygonRelativeToBox],
         expandedBox.width,
         expandedBox.height,
@@ -129,9 +145,6 @@ class PolygonInpaintingService {
       );
 
       // 4. Resize to input_size if needed
-      ui.Image resizedImage;
-      ui.Image resizedMask;
-
       if (expandedBox.width != config.inputSize ||
           expandedBox.height != config.inputSize) {
         // Use a safer resizing method
@@ -152,10 +165,9 @@ class PolygonInpaintingService {
       }
 
       // 5. Send to ONNX model for inpainting
-      final inpaintedPatch = await _runInference(resizedImage, resizedMask);
+      inpaintedPatch = await _runInference(resizedImage, resizedMask);
 
       // If the patch was resized, resize it back to the original bbox size
-      ui.Image finalPatch;
       if (expandedBox.width != config.inputSize ||
           expandedBox.height != config.inputSize) {
         finalPatch = await _safeResizeImage(
@@ -163,23 +175,44 @@ class PolygonInpaintingService {
           expandedBox.width,
           expandedBox.height,
         );
+        // Dispose inpaintedPatch as we no longer need it
+        ImageDisposalUtil.disposeImage(inpaintedPatch);
+        inpaintedPatch = null;
       } else {
         finalPatch = inpaintedPatch;
+        inpaintedPatch = null; // Avoid double disposal
       }
 
       // 6. Apply inpainted patch only within the polygon area
-      return await _blendPatchIntoImage(
+      result = await _blendPatchIntoImage(
         image,
         finalPatch,
         expandedBox,
         polygon,
       );
+
+      return result;
     } catch (e) {
       if (kDebugMode) {
         log('Error in _inpaintPolygon: $e',
             name: 'PolygonInpaintingService', error: e);
       }
       rethrow;
+    } finally {
+      // Dispose all temporary images
+      List<ui.Image?> imagesToDispose = [
+        croppedImage,
+        maskImage,
+        // Only dispose resizedImage if it's different from croppedImage
+        resizedImage != croppedImage ? resizedImage : null,
+        // Only dispose resizedMask if it's different from maskImage
+        resizedMask != maskImage ? resizedMask : null,
+        inpaintedPatch,
+        // Only dispose finalPatch if it's different from inpaintedPatch
+        finalPatch != inpaintedPatch ? finalPatch : null,
+      ];
+
+      ImageDisposalUtil.disposeImages(imagesToDispose);
     }
   }
 
@@ -214,7 +247,9 @@ class PolygonInpaintingService {
 
       // Convert to an image
       final picture = recorder.endRecording();
-      return await picture.toImage(targetWidth, targetHeight);
+      final resizedImage = await picture.toImage(targetWidth, targetHeight);
+
+      return resizedImage;
     } catch (e) {
       if (kDebugMode) {
         log('Error in _safeResizeImage: $e',
@@ -472,104 +507,123 @@ class PolygonInpaintingService {
       for (int polyIndex = 0; polyIndex < polygons.length; polyIndex++) {
         final polygon = polygons[polyIndex];
 
-        // 1. Compute bounding box around the polygon
-        final bbox = BoundingBox.fromPoints(polygon);
+        ui.Image? croppedImage;
+        ui.Image? maskImage;
+        ui.Image? resizedImage;
+        ui.Image? resizedMask;
+        ui.Image? inpaintedPatch;
+        ui.Image? finalPatch;
 
-        // 2. Determine expansion size based on mask dimensions
-        BoundingBox expandedBox;
-
-        // If bbox is small enough, expand to input_size
-        if (bbox.width <= cfg.inputSize && bbox.height <= cfg.inputSize) {
-          expandedBox = bbox.ensureSize(
-            targetSize: cfg.inputSize,
-            imageWidth: currentImage.width,
-            imageHeight: currentImage.height,
-          );
-        } else {
-          // Otherwise, expand by the specified percentage
-          expandedBox = bbox.expand(
-            percentage: cfg.expandPercentage,
-            maxExpansion: cfg.maxExpansionSize,
-            imageWidth: currentImage.width,
-            imageHeight: currentImage.height,
-          );
-        }
-
-        // 3. Crop the current image using the adjusted bbox
-        final croppedImage = await _cropImage(
-          currentImage,
-          expandedBox,
-        );
-        debugImages['cropped_$polyIndex'] = croppedImage;
-
-        // Generate mask for the polygon
-        final polygonRelativeToBox = _adjustPolygonToBox(polygon, expandedBox);
-
-        final maskImage = await MaskGenerationService.instance.generateMask(
-          [polygonRelativeToBox],
-          expandedBox.width,
-          expandedBox.height,
-          backgroundColor: Colors.black,
-          fillColor: Colors.white,
-        );
-        debugImages['mask_$polyIndex'] = maskImage;
-
-        // 4. Resize to input_size if needed
-        ui.Image resizedImage;
-        ui.Image resizedMask;
-
-        if (expandedBox.width != cfg.inputSize ||
-            expandedBox.height != cfg.inputSize) {
-          // Resize the image and mask
-          resizedImage = await _safeResizeImage(
-            croppedImage,
-            cfg.inputSize,
-            cfg.inputSize,
-          );
-          debugImages['resized_image_$polyIndex'] = resizedImage;
-
-          resizedMask = await _safeResizeImage(
-            maskImage,
-            cfg.inputSize,
-            cfg.inputSize,
-          );
-          debugImages['resized_mask_$polyIndex'] = resizedMask;
-        } else {
-          resizedImage = croppedImage;
-          resizedMask = maskImage;
-        }
-
-        // 5. Run inference
         try {
-          final inpaintedPatch = await _runInference(resizedImage, resizedMask);
-          debugImages['inpainted_patch_raw_$polyIndex'] = inpaintedPatch;
+          // 1. Compute bounding box around the polygon
+          final bbox = BoundingBox.fromPoints(polygon);
 
-          // If the patch was resized, resize it back to the original bbox size
-          ui.Image finalPatch;
-          if (expandedBox.width != cfg.inputSize ||
-              expandedBox.height != cfg.inputSize) {
-            finalPatch = await _safeResizeImage(
-              inpaintedPatch,
-              expandedBox.width,
-              expandedBox.height,
+          // 2. Determine expansion size based on mask dimensions
+          BoundingBox expandedBox;
+
+          // If bbox is small enough, expand to input_size
+          if (bbox.width <= cfg.inputSize && bbox.height <= cfg.inputSize) {
+            expandedBox = bbox.ensureSize(
+              targetSize: cfg.inputSize,
+              imageWidth: currentImage.width,
+              imageHeight: currentImage.height,
             );
           } else {
-            finalPatch = inpaintedPatch;
+            // Otherwise, expand by the specified percentage
+            expandedBox = bbox.expand(
+              percentage: cfg.expandPercentage,
+              maxExpansion: cfg.maxExpansionSize,
+              imageWidth: currentImage.width,
+              imageHeight: currentImage.height,
+            );
           }
-          debugImages['inpainted_patch_resized_$polyIndex'] = finalPatch;
 
-          // 7. Blend the patch into the current image
-          currentImage = await _blendPatchIntoImage(
+          // 3. Crop the current image using the adjusted bbox
+          croppedImage = await _cropImage(
             currentImage,
-            finalPatch,
             expandedBox,
-            polygon,
           );
-        } catch (e) {
-          if (kDebugMode) {
-            log('Error generating inpainted patch for polygon $polyIndex: $e',
-                name: 'PolygonInpaintingService', error: e);
+          debugImages['cropped_$polyIndex'] = croppedImage;
+
+          // Generate mask for the polygon
+          final polygonRelativeToBox =
+              _adjustPolygonToBox(polygon, expandedBox);
+
+          maskImage = await MaskGenerationService.instance.generateMask(
+            [polygonRelativeToBox],
+            expandedBox.width,
+            expandedBox.height,
+            backgroundColor: Colors.black,
+            fillColor: Colors.white,
+          );
+          debugImages['mask_$polyIndex'] = maskImage;
+
+          // 4. Resize to input_size if needed
+          if (expandedBox.width != cfg.inputSize ||
+              expandedBox.height != cfg.inputSize) {
+            // Resize the image and mask
+            resizedImage = await _safeResizeImage(
+              croppedImage,
+              cfg.inputSize,
+              cfg.inputSize,
+            );
+            debugImages['resized_image_$polyIndex'] = resizedImage;
+
+            resizedMask = await _safeResizeImage(
+              maskImage,
+              cfg.inputSize,
+              cfg.inputSize,
+            );
+            debugImages['resized_mask_$polyIndex'] = resizedMask;
+          } else {
+            resizedImage = croppedImage;
+            resizedMask = maskImage;
           }
+
+          // 5. Run inference
+          try {
+            inpaintedPatch = await _runInference(resizedImage, resizedMask);
+            debugImages['inpainted_patch_raw_$polyIndex'] = inpaintedPatch;
+
+            // If the patch was resized, resize it back to the original bbox size
+            if (expandedBox.width != cfg.inputSize ||
+                expandedBox.height != cfg.inputSize) {
+              finalPatch = await _safeResizeImage(
+                inpaintedPatch,
+                expandedBox.width,
+                expandedBox.height,
+              );
+            } else {
+              finalPatch = inpaintedPatch;
+              inpaintedPatch = null; // Avoid double disposal
+            }
+            debugImages['inpainted_patch_resized_$polyIndex'] = finalPatch;
+
+            // 7. Blend the patch into the current image
+            ui.Image previousImage = currentImage;
+            if (polyIndex > 0) {
+              // Don't blend into the original for first polygon
+              currentImage = await _blendPatchIntoImage(
+                currentImage,
+                finalPatch,
+                expandedBox,
+                polygon,
+              );
+
+              // Dispose the previous intermediate result
+              if (previousImage != originalImage) {
+                ImageDisposalUtil.disposeImage(previousImage);
+              }
+            }
+          } catch (e) {
+            if (kDebugMode) {
+              log('Error generating inpainted patch for polygon $polyIndex: $e',
+                  name: 'PolygonInpaintingService', error: e);
+            }
+          }
+        } finally {
+          // We don't dispose images stored in debugImages
+          // They will be disposed by the caller
         }
       }
 

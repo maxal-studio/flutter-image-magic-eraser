@@ -105,16 +105,21 @@ class OnnxModelService {
       throw Exception("ONNX session not initialized");
     }
 
+    OrtRunOptions? runOptions;
+    List<OrtValue?>? outputs;
+
     try {
-      final runOptions = OrtRunOptions();
-      final outputs = await _session!.runAsync(runOptions, inputs);
-      runOptions.release();
+      runOptions = OrtRunOptions();
+      outputs = await _session!.runAsync(runOptions, inputs);
       return outputs;
     } catch (e) {
       if (kDebugMode) {
         log('Error running inference: $e', name: "OnnxModelService", error: e);
       }
       rethrow;
+    } finally {
+      // Always release run options
+      runOptions?.release();
     }
   }
 

@@ -5,6 +5,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../utils/image_disposal_util.dart';
+
 /// Service for generating masks from polygons
 ///
 /// This service provides methods to generate mask images from lists of points
@@ -149,6 +151,9 @@ class MaskGenerationService {
 
     // Convert the mask image to bytes
     final bytes = await maskImageToBytes(maskImage);
+
+    // Dispose the maskImage since we have the bytes now
+    ImageDisposalUtil.disposeImage(maskImage);
 
     // Return the mask image as a Flutter Image widget
     return Image.memory(

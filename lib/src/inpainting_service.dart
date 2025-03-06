@@ -11,6 +11,7 @@ import 'services/mask_generation_service.dart';
 import 'services/onnx_model_service.dart';
 import 'services/polygon_inpainting_service.dart';
 import 'services/polygon_processing_service.dart';
+import 'utils/image_disposal_util.dart';
 
 export 'models/inpainting_config.dart';
 export 'models/model_init_data.dart';
@@ -156,7 +157,7 @@ class InpaintingService {
         PolygonProcessingService.instance.processPolygons(polygons);
     final decodedImage = await decodeImageFromList(image);
 
-    return MaskGenerationService.instance.generateDebugMask(
+    final result = await MaskGenerationService.instance.generateDebugMask(
       processedPolygons,
       decodedImage.width,
       decodedImage.height,
@@ -165,6 +166,11 @@ class InpaintingService {
       fillColor: fillColor,
       drawOutline: drawOutline,
     );
+
+    // Dispose the decoded image since we don't need it anymore
+    ImageDisposalUtil.disposeImage(decodedImage);
+
+    return result;
   }
 
   /// Generates a debug visualization of the inpainting process
@@ -220,11 +226,17 @@ class InpaintingService {
       // Process polygons before generating debug images
       final processedPolygons =
           PolygonProcessingService.instance.processPolygons(polygons);
-      return await PolygonInpaintingService.instance.generateDebugImages(
+
+      // Get debug images
+      final debugImages =
+          await PolygonInpaintingService.instance.generateDebugImages(
         imageBytes,
         processedPolygons,
         config: config,
       );
+
+      // Return the debug images (caller is responsible for disposing them)
+      return debugImages;
     } catch (e) {
       if (kDebugMode) {
         log('Error generating debug images: $e',
@@ -232,5 +244,13 @@ class InpaintingService {
       }
       rethrow;
     }
+  }
+
+  /// Disposes of debug images after use
+  ///
+  /// This method should be called after you are done with the debug images
+  /// to free up memory resources.
+  void disposeDebugImages(Map<String, ui.Image> debugImages) {
+    ImageDisposalUtil.disposeImageMap(debugImages);
   }
 }
