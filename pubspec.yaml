@@ -8,12 +8,11 @@ environment:
   flutter: ">=1.17.0"
 
 topics:
-  - image-processing
+  - object-eraser
   - machine-learning
-  - onnx
+  - image-editor
   - LaMa
   - inpainting
-  - image-to-image
 
 dependencies:
   flutter:
