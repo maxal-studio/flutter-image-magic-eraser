@@ -1,4 +1,4 @@
-## 0.0.1
+## 1.0.0
 
 ### Added
 - Initial release of the **Image Magic Eraser** Flutter package.
