@@ -11,7 +11,7 @@ topics:
   - object-eraser
   - machine-learning
   - image-editor
-  - LaMa
+  - lama-model
   - inpainting
 
 dependencies:
