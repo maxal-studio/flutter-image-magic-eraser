@@ -15,8 +15,38 @@ enum ModelLoadingState {
   /// Model has been loaded successfully
   loaded,
 
-  /// Model loading failed
-  error
+  /// Generic error during model loading or downloading
+  error,
+
+  /// Error specifically during model download (network/URL issues)
+  downloadError,
+
+  /// Error during model loading/initialization
+  loadingError,
+
+  /// Error during checksum verification
+  checksumError
+}
+
+/// Structure to hold detailed information about initialization errors
+class ModelInitializationError {
+  /// The type of error that occurred
+  final ModelLoadingState errorType;
+
+  /// Human-readable error message
+  final String message;
+
+  /// The original exception that caused the error
+  final dynamic originalError;
+
+  ModelInitializationError({
+    required this.errorType,
+    required this.message,
+    this.originalError,
+  });
+
+  @override
+  String toString() => 'ModelInitializationError: $message (${errorType.name})';
 }
 
 /// Structure to hold model data for initialization

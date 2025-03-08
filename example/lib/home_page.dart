@@ -48,7 +48,7 @@ class HomePage extends StatelessWidget {
                     MaterialPageRoute(
                       builder: (context) => const ModelDownloadPage(
                         modelUrl:
-                            'https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx',
+                            'https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32a.onnx',
                         // The SHA-256 checksum of the lama_fp32.onnx model
                         expectedChecksum:
                             '1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6',

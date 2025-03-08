@@ -67,12 +67,14 @@ await InpaintingService.instance.initializeOrt('assets/models/lama_fp32.onnx');
 You can also download and initialize the model directly from a URL:
 
 ```dart
+// Model URL: 
+String modelUrl = 'https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx';
 // SHA-256 checksum for model integrity verification
 String modelChecksum = '1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6';
 
 // Initialize from URL with checksum verification
 await InpaintingService.instance.initializeOrtFromUrl(
-  'https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx',
+  modelUrl,
   modelChecksum,
 );
 ```
@@ -125,7 +127,16 @@ InpaintingService.instance.modelLoadingStateStream.listen((state) {
       // Model is ready to use
       break;
     case ModelLoadingState.error:
-      // Show error message
+      // Generic error occurred
+      break;
+    case ModelLoadingState.downloadError:
+      // Error downloading the model (network issues)
+      break;
+    case ModelLoadingState.checksumError:
+      // Model integrity verification failed
+      break;
+    case ModelLoadingState.loadingError:
+      // Error loading the model (incompatible format)
       break;
   }
 });
@@ -142,6 +153,34 @@ class _MyWidgetState extends State<MyWidget> {
         InpaintingService.instance.modelLoadingStateStream.listen((state) {
       setState(() {
         // Update UI based on state
+        String message = '';
+        switch (state) {
+          case ModelLoadingState.notLoaded:
+            message = 'Model not loaded';
+            break;
+          case ModelLoadingState.downloading:
+            message = 'Downloading model...';
+            break;
+          case ModelLoadingState.loading:
+            message = 'Loading model...';
+            break;
+          case ModelLoadingState.loaded:
+            message = 'Model ready to use';
+            break;
+          case ModelLoadingState.error:
+            message = 'An error occurred';
+            break;
+          case ModelLoadingState.downloadError:
+            message = 'Network error. Please check your connection.';
+            break;
+          case ModelLoadingState.checksumError:
+            message = 'Model integrity check failed.';
+            break;
+          case ModelLoadingState.loadingError:
+            message = 'Error loading model. Format may be incompatible.';
+            break;
+        }
+        // Use message to update UI
       });
     });
   }
@@ -156,11 +195,21 @@ class _MyWidgetState extends State<MyWidget> {
   Widget build(BuildContext context) {
     final modelState = InpaintingService.instance.modelLoadingState;
     
-    return modelState == ModelLoadingState.loading
-        ? const CircularProgressIndicator()
-        : modelState == ModelLoadingState.loaded
-            ? const Text('Ready to use')
-            : const Text('Model not loaded');
+    // Show different UI based on model state
+    if (modelState == ModelLoadingState.loaded) {
+      return const Text('Ready to use');
+    } else if (modelState == ModelLoadingState.downloading || 
+              modelState == ModelLoadingState.loading) {
+      return const CircularProgressIndicator();
+    } else if (modelState == ModelLoadingState.downloadError) {
+      return const Text('Network error. Check your connection and try again.');
+    } else if (modelState == ModelLoadingState.checksumError) {
+      return const Text('Model integrity check failed. Try downloading again.');
+    } else if (modelState == ModelLoadingState.loadingError) {
+      return const Text('Error loading model. Format may be incompatible.');
+    } else {
+      return const Text('Model not loaded');
+    }
   }
 }
 ```

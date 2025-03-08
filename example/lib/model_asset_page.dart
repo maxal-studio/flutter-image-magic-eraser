@@ -88,6 +88,15 @@ class _ModelAssetPageState extends State<ModelAssetPage> {
       case ModelLoadingState.error:
         _statusMessage = 'Error loading model';
         break;
+      case ModelLoadingState.downloadError:
+        _statusMessage = 'Error preparing assets';
+        break;
+      case ModelLoadingState.checksumError:
+        _statusMessage = 'Model file integrity check failed';
+        break;
+      case ModelLoadingState.loadingError:
+        _statusMessage = 'Error loading model from assets';
+        break;
     }
   }
 

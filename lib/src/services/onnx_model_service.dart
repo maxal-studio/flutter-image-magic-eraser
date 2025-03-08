@@ -92,7 +92,7 @@ class OnnxModelService {
             name: "OnnxModelService");
       }
     } catch (e) {
-      _setState(ModelLoadingState.error);
+      // The specific error state is already set by the method that threw the exception
       if (kDebugMode) {
         log('Error initializing model from URL: $e',
             name: "OnnxModelService", error: e);
@@ -180,11 +180,18 @@ class OnnxModelService {
         // Delete corrupted file and download again
         await file.delete();
         _setState(ModelLoadingState.downloading);
-        await _downloadModel(url, file.path);
+        try {
+          await _downloadModel(url, file.path);
+        } catch (e) {
+          // Set download error state and rethrow
+          _setState(ModelLoadingState.downloadError);
+          rethrow;
+        }
 
         // Verify the newly downloaded file
         final isNewFileValid = await _verifyFileIntegrity(file.path, checksum);
         if (!isNewFileValid) {
+          _setState(ModelLoadingState.checksumError);
           throw Exception(
               'Downloaded model file failed integrity check. Expected checksum: $checksum');
         }
@@ -199,13 +206,20 @@ class OnnxModelService {
 
     // File doesn't exist, download it
     _setState(ModelLoadingState.downloading);
-    await _downloadModel(url, file.path);
+    try {
+      await _downloadModel(url, file.path);
+    } catch (e) {
+      // Set download error state and rethrow
+      _setState(ModelLoadingState.downloadError);
+      rethrow;
+    }
 
     // Verify downloaded file integrity
     final isValid = await _verifyFileIntegrity(file.path, checksum);
     if (!isValid) {
       // Clean up invalid file
       await file.delete();
+      _setState(ModelLoadingState.checksumError);
       throw Exception(
           'Downloaded model file failed integrity check. Expected checksum: $checksum');
     }
@@ -289,7 +303,7 @@ class OnnxModelService {
       if (kDebugMode) {
         log('Error downloading model: $e', name: "OnnxModelService", error: e);
       }
-      _setState(ModelLoadingState.error);
+      _setState(ModelLoadingState.downloadError);
       rethrow;
     }
   }
@@ -332,7 +346,7 @@ class OnnxModelService {
             name: "OnnxModelService");
       }
     } catch (e) {
-      _setState(ModelLoadingState.error);
+      _setState(ModelLoadingState.loadingError);
       if (kDebugMode) {
         log('Error initializing ONNX model: $e',
             name: "OnnxModelService", error: e);
