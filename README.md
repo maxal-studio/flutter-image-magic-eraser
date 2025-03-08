@@ -62,7 +62,39 @@ import 'package:image_magic_eraser/image_magic_eraser.dart';
 await InpaintingService.instance.initializeOrt('assets/models/lama_fp32.onnx');
 ```
 
-> **Attention:** Update these `Xcode` Settings under `Runner` / `Build Settings` / `Deployment`  
+### Initialize from URL (Alternative)
+
+You can also download and initialize the model directly from a URL:
+
+```dart
+// SHA-256 checksum for model integrity verification
+String modelChecksum = '1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6';
+
+// Initialize from URL with checksum verification
+await InpaintingService.instance.initializeOrtFromUrl(
+  'https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx',
+  modelChecksum,
+);
+```
+
+> **Note:** Downloaded models are stored permanently in the app's document directory. Once downloaded, the model won't need to be downloaded again.
+
+### Track Download Progress
+
+When initializing from URL, you can monitor the download progress:
+
+```dart
+// Listen to download progress updates
+InpaintingService.instance.downloadProgressStream.listen((progress) {
+  double percentage = progress.progress * 100;
+  int downloadedMB = progress.downloaded ~/ (1024 * 1024);
+  int totalMB = progress.total ~/ (1024 * 1024);
+  
+  print('Downloaded: $downloadedMB MB / $totalMB MB ($percentage%)');
+});
+```
+
+> **Attention:** When model is loaded from assets update these `Xcode` Settings under `Runner` / `Build Settings` / `Deployment`
 
 `Strip Linked Product` : `No`  
 `Strip Style` : `Non-Global Symbols`  
@@ -82,6 +114,9 @@ InpaintingService.instance.modelLoadingStateStream.listen((state) {
   switch (state) {
     case ModelLoadingState.notLoaded:
       // Model needs to be loaded
+      break;
+    case ModelLoadingState.downloading:
+      // Model is being downloaded (when using initializeOrtFromUrl)
       break;
     case ModelLoadingState.loading:
       // Show loading indicator

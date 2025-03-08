@@ -32,7 +32,11 @@ class InpaintingService {
   Stream<ModelLoadingState> get modelLoadingStateStream =>
       OnnxModelService.instance.stateStream;
 
-  /// Initializes the ONNX environment and creates a session.
+  /// Get the stream of download progress updates
+  Stream<DownloadProgress> get downloadProgressStream =>
+      OnnxModelService.instance.downloadProgressStream;
+
+  /// Initializes the ONNX environment and creates a session from a local asset.
   ///
   /// This method should be called once before using the inpaint methods.
   /// It runs in an isolate to prevent UI freezing.
@@ -47,6 +51,37 @@ class InpaintingService {
     } catch (e) {
       if (kDebugMode) {
         log('Error initializing inpainting service: $e',
+            name: "InpaintingService", error: e);
+      }
+      rethrow;
+    }
+  }
+
+  /// Initializes the ONNX environment and creates a session from a URL.
+  ///
+  /// Downloads the model if it doesn't exist locally, then initializes it.
+  /// Provides progress updates via the downloadProgressStream.
+  ///
+  /// - [modelUrl]: URL to download the model from
+  /// - [expectedChecksum]: SHA-256 checksum to verify the downloaded file integrity.
+  ///   This is required for security and integrity verification.
+  Future<void> initializeOrtFromUrl(
+    String modelUrl,
+    String expectedChecksum,
+  ) async {
+    try {
+      await OnnxModelService.instance.initializeModelFromUrl(
+        modelUrl,
+        expectedChecksum,
+      );
+
+      if (kDebugMode) {
+        log('Inpainting service initialized from URL successfully.',
+            name: "InpaintingService");
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error initializing inpainting service from URL: $e',
             name: "InpaintingService", error: e);
       }
       rethrow;

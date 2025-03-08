@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'dart:developer';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:onnxruntime/onnxruntime.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
+import 'package:crypto/crypto.dart';
 
 import '../models/model_init_data.dart';
 
@@ -30,23 +34,285 @@ class OnnxModelService {
   /// Current state of model loading
   ModelLoadingState get currentState => _currentState;
 
+  /// Stream controller for broadcasting download progress
+  final _downloadProgressController =
+      StreamController<DownloadProgress>.broadcast();
+
+  /// Stream of download progress updates
+  Stream<DownloadProgress> get downloadProgressStream =>
+      _downloadProgressController.stream;
+
+  /// Directory where downloaded models are stored
+  String? _modelStorageDirectory;
+
+  /// Get the directory where models are stored
+  Future<String> get _modelDir async {
+    if (_modelStorageDirectory != null) return _modelStorageDirectory!;
+
+    final appDir = await getApplicationDocumentsDirectory();
+    _modelStorageDirectory = '${appDir.path}/models';
+
+    // Create the directory if it doesn't exist
+    final directory = Directory(_modelStorageDirectory!);
+    if (!directory.existsSync()) {
+      await directory.create(recursive: true);
+    }
+
+    return _modelStorageDirectory!;
+  }
+
   /// Updates the current state and broadcasts it to listeners
   void _setState(ModelLoadingState newState) {
     _currentState = newState;
     _stateController.add(newState);
   }
 
+  /// Initializes the ONNX environment and creates a session from a URL
+  ///
+  /// Downloads the model if it doesn't exist locally, then initializes it
+  /// Provides progress updates via the downloadProgressStream
+  ///
+  /// - [modelUrl]: URL to download the model from
+  /// - [expectedChecksum]: SHA-256 checksum to verify the downloaded file integrity.
+  ///   This is required for security and integrity verification.
+  Future<void> initializeModelFromUrl(
+    String modelUrl,
+    String expectedChecksum,
+  ) async {
+    try {
+      // Use the checksum as the filename for better identification and verification
+      final modelPath =
+          await _ensureModelDownloaded(modelUrl, expectedChecksum);
+
+      // Now initialize from the local file
+      await initializeModel(modelPath, isAsset: false);
+
+      if (kDebugMode) {
+        log('Model initialized from URL successfully',
+            name: "OnnxModelService");
+      }
+    } catch (e) {
+      _setState(ModelLoadingState.error);
+      if (kDebugMode) {
+        log('Error initializing model from URL: $e',
+            name: "OnnxModelService", error: e);
+      }
+      rethrow;
+    }
+  }
+
+  /// Calculate SHA-256 checksum of a file
+  Future<String> _calculateFileChecksum(String filePath) async {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      throw Exception('File does not exist: $filePath');
+    }
+
+    try {
+      final fileBytes = await file.readAsBytes();
+      final digest = sha256.convert(fileBytes);
+      return digest.toString();
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error calculating checksum: $e',
+            name: "OnnxModelService", error: e);
+      }
+      rethrow;
+    }
+  }
+
+  /// Verifies if a file's checksum matches the expected value
+  Future<bool> _verifyFileIntegrity(
+      String filePath, String? expectedChecksum) async {
+    // If no checksum is provided, assume file is valid
+    if (expectedChecksum == null) {
+      if (kDebugMode) {
+        log('No checksum provided for verification, assuming file is valid: $filePath',
+            name: "OnnxModelService");
+      }
+      return true;
+    }
+
+    try {
+      final actualChecksum = await _calculateFileChecksum(filePath);
+      final isValid =
+          actualChecksum.toLowerCase() == expectedChecksum.toLowerCase();
+
+      if (kDebugMode) {
+        if (isValid) {
+          log('Checksum verification successful: $filePath',
+              name: "OnnxModelService");
+        } else {
+          log('Checksum verification failed: $filePath',
+              name: "OnnxModelService");
+          log('Expected: $expectedChecksum', name: "OnnxModelService");
+          log('Actual: $actualChecksum', name: "OnnxModelService");
+        }
+      }
+
+      return isValid;
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error verifying file integrity: $e',
+            name: "OnnxModelService", error: e);
+      }
+      return false;
+    }
+  }
+
+  /// Checks if the model exists locally, downloads if needed
+  Future<String> _ensureModelDownloaded(String url, String checksum) async {
+    final modelDir = await _modelDir;
+    // Use checksum as the filename with a .onnx extension
+    final file = File('$modelDir/$checksum.onnx');
+
+    // Check if the file already exists
+    if (await file.exists()) {
+      // Verify file integrity with checksum
+      final isValid = await _verifyFileIntegrity(file.path, checksum);
+
+      if (!isValid) {
+        if (kDebugMode) {
+          log('Existing model file is corrupted, re-downloading: ${file.path}',
+              name: "OnnxModelService");
+        }
+
+        // Delete corrupted file and download again
+        await file.delete();
+        _setState(ModelLoadingState.downloading);
+        await _downloadModel(url, file.path);
+
+        // Verify the newly downloaded file
+        final isNewFileValid = await _verifyFileIntegrity(file.path, checksum);
+        if (!isNewFileValid) {
+          throw Exception(
+              'Downloaded model file failed integrity check. Expected checksum: $checksum');
+        }
+      } else {
+        if (kDebugMode) {
+          log('Model already downloaded and verified: ${file.path}',
+              name: "OnnxModelService");
+        }
+      }
+      return file.path;
+    }
+
+    // File doesn't exist, download it
+    _setState(ModelLoadingState.downloading);
+    await _downloadModel(url, file.path);
+
+    // Verify downloaded file integrity
+    final isValid = await _verifyFileIntegrity(file.path, checksum);
+    if (!isValid) {
+      // Clean up invalid file
+      await file.delete();
+      throw Exception(
+          'Downloaded model file failed integrity check. Expected checksum: $checksum');
+    }
+
+    return file.path;
+  }
+
+  /// Downloads a model from the given URL with progress tracking
+  Future<void> _downloadModel(String url, String savePath) async {
+    try {
+      // Make a HEAD request to get the content length
+      final request = await http.head(Uri.parse(url));
+      final contentLength = int.parse(request.headers['content-length'] ?? '0');
+
+      if (kDebugMode) {
+        log('Downloading model from $url (${contentLength ~/ 1024} KB)',
+            name: "OnnxModelService");
+      }
+
+      // Create a client for the download
+      final client = http.Client();
+      final response = await client.send(http.Request('GET', Uri.parse(url)));
+
+      // Open the output file
+      final file = File(savePath);
+      final sink = file.openWrite();
+
+      // Track download progress
+      int downloaded = 0;
+
+      // Create a completer to wait for the download to finish
+      final completer = Completer<void>();
+
+      // Process the response stream
+      response.stream.listen(
+        (List<int> chunk) {
+          // Write the chunk to the file
+          sink.add(chunk);
+
+          // Update progress
+          downloaded += chunk.length;
+          final progress = contentLength > 0 ? downloaded / contentLength : 0.0;
+
+          // Broadcast progress update
+          _downloadProgressController.add(DownloadProgress(
+            downloaded: downloaded,
+            total: contentLength,
+            progress: progress,
+          ));
+
+          if (kDebugMode && downloaded % (1024 * 1024) < chunk.length) {
+            log('Downloaded ${downloaded ~/ 1024} KB (${(progress * 100).toStringAsFixed(1)}%)',
+                name: "OnnxModelService");
+          }
+        },
+        onDone: () async {
+          // Ensure all data is written to disk before closing
+          await sink.flush();
+          await sink.close();
+          client.close();
+
+          if (kDebugMode) {
+            log('Download complete: $savePath', name: "OnnxModelService");
+          }
+
+          // Complete the future
+          completer.complete();
+        },
+        onError: (e) {
+          sink.close();
+          client.close();
+          file.deleteSync();
+          completer.completeError(e);
+        },
+        cancelOnError: true,
+      );
+
+      // Wait for the download to complete
+      await completer.future;
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error downloading model: $e', name: "OnnxModelService", error: e);
+      }
+      _setState(ModelLoadingState.error);
+      rethrow;
+    }
+  }
+
   /// Initializes the ONNX environment and creates a session
   ///
   /// This method should be called once before using the model for inference
   /// It runs in an isolate to prevent UI freezing
-  Future<void> initializeModel(String modelPath) async {
+  Future<void> initializeModel(String modelPath, {bool isAsset = true}) async {
     try {
       _setState(ModelLoadingState.loading);
 
-      // Load the model bytes in the main isolate
-      final rawAssetFile = await rootBundle.load(modelPath);
-      final bytes = rawAssetFile.buffer.asUint8List();
+      Uint8List bytes;
+
+      if (isAsset) {
+        // Load the model bytes from an asset in the main isolate
+        final rawAssetFile = await rootBundle.load(modelPath);
+        bytes = rawAssetFile.buffer.asUint8List();
+      } else {
+        // Load the model bytes from a file in the main isolate
+        final file = File(modelPath);
+        bytes = await file.readAsBytes();
+      }
 
       // Initialize the ONNX runtime environment in the main isolate
       // This is required before creating a session
