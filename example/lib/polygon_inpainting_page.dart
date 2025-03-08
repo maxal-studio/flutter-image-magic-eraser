@@ -54,10 +54,12 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
       setState(() {});
     });
 
-    // Load model if not already loaded
-    if (InpaintingService.instance.modelLoadingState ==
-        ModelLoadingState.notLoaded) {
-      _loadModel();
+    // Check if the model is loaded
+    if (!InpaintingService.instance.isModelLoaded()) {
+      // Show error if model is not loaded
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showModelNotLoadedError();
+      });
     }
   }
 
@@ -84,17 +86,22 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
     _selectedImage = null;
   }
 
-  /// Load the inpainting model
-  Future<void> _loadModel() async {
-    try {
-      await InpaintingService.instance
-          .initializeOrt('assets/models/lama_fp32.onnx');
-      if (!mounted) return;
-      _showSuccess('Model loaded successfully');
-    } catch (e) {
-      if (!mounted) return;
-      _showError('Error loading model: $e');
-    }
+  /// Show error if model is not loaded and navigate back
+  void _showModelNotLoadedError() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Error: Model not loaded. Please load the model first.'),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 3),
+      ),
+    );
+
+    // Navigate back after a short delay
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    });
   }
 
   /// Pick image from gallery
@@ -277,17 +284,6 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
         content: Text(message),
         backgroundColor: Colors.red,
         duration: const Duration(seconds: 5),
-      ),
-    );
-  }
-
-  /// Show success message
-  void _showSuccess(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 3),
       ),
     );
   }

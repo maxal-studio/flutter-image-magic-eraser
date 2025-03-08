@@ -1,4 +1,4 @@
-import 'package:example/polygon_inpainting_page.dart';
+import 'package:example/home_page.dart';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -12,7 +12,11 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Image Magic Eraser Demo',
-      home: const PolygonInpaintingPage(),
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        useMaterial3: true,
+      ),
+      home: const HomePage(),
     );
   }
 }
