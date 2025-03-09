@@ -57,6 +57,14 @@ class FileIntegrityData {
   FileIntegrityData(this.filePath, this.expectedChecksum);
 }
 
+/// Structure to hold minimal information for model loading from file path
+class ModelPathData {
+  final String modelPath;
+  final bool isAsset;
+
+  ModelPathData(this.modelPath, this.isAsset);
+}
+
 /// Structure to hold model data for initialization
 class ModelInitData {
   final String modelPath;

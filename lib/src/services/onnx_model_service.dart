@@ -84,6 +84,10 @@ class OnnxModelService {
       final modelPath =
           await _ensureModelDownloaded(modelUrl, expectedChecksum);
 
+      // Add explicit GC hint between file verification and model loading
+      // This doesn't force GC but helps suggest it's a good time to run it
+      await Future.delayed(Duration.zero);
+
       // Now initialize from the local file
       await initializeModel(modelPath, isAsset: false);
 
@@ -101,19 +105,20 @@ class OnnxModelService {
     }
   }
 
-  /// Static method for calculating file checksum in an isolate
-  static Future<String> _calculateChecksumInIsolate(String filePath) async {
+  /// Static method to calculate checksum using a memory-efficient chunked approach
+  static Future<String> _calculateChecksumInIsolateWithChunks(
+      String filePath) async {
     final file = File(filePath);
     if (!await file.exists()) {
       throw Exception('File does not exist: $filePath');
     }
 
-    final fileBytes = await file.readAsBytes();
-    final digest = sha256.convert(fileBytes);
+    // Create SHA256 hasher that processes chunks
+    final digest = await sha256.bind(file.openRead()).first;
     return digest.toString();
   }
 
-  /// Static method for verifying file integrity in an isolate
+  /// Static method for verifying file integrity in an isolate with chunked reading
   static Future<bool> _verifyFileIntegrityInIsolate(
       FileIntegrityData data) async {
     // If no checksum is provided, assume file is valid
@@ -122,7 +127,8 @@ class OnnxModelService {
     }
 
     try {
-      final actualChecksum = await _calculateChecksumInIsolate(data.filePath);
+      final actualChecksum =
+          await _calculateChecksumInIsolateWithChunks(data.filePath);
       return actualChecksum.toLowerCase() ==
           data.expectedChecksum!.toLowerCase();
     } catch (e) {
@@ -131,7 +137,7 @@ class OnnxModelService {
     }
   }
 
-  /// Verifies if a file's checksum matches the expected value
+  /// Verifies if a file's checksum matches the expected value using chunks to reduce memory usage
   Future<bool> _verifyFileIntegrity(
       String filePath, String? expectedChecksum) async {
     // If no checksum is provided, assume file is valid
@@ -145,11 +151,11 @@ class OnnxModelService {
 
     try {
       if (kDebugMode) {
-        log('Starting checksum verification for: $filePath',
+        log('Starting memory-efficient checksum verification for: $filePath',
             name: "OnnxModelService");
       }
 
-      // Run the verification in a background isolate
+      // Run the verification in a background isolate with chunked reading
       final isValid = await compute(_verifyFileIntegrityInIsolate,
           FileIntegrityData(filePath, expectedChecksum));
 
@@ -352,32 +358,6 @@ class OnnxModelService {
             name: "OnnxModelService");
       }
 
-      Uint8List bytes;
-
-      if (isAsset) {
-        // Load the model bytes from an asset in the main isolate
-        if (kDebugMode) {
-          log('Reading asset file: $modelPath', name: "OnnxModelService");
-        }
-        final rawAssetFile = await rootBundle.load(modelPath);
-        bytes = rawAssetFile.buffer.asUint8List();
-        if (kDebugMode) {
-          final sizeMB = (bytes.length / (1024 * 1024)).toStringAsFixed(2);
-          log('Asset loaded, size: $sizeMB MB', name: "OnnxModelService");
-        }
-      } else {
-        // Load the model bytes from a file in the main isolate
-        if (kDebugMode) {
-          log('Reading file: $modelPath', name: "OnnxModelService");
-        }
-        final file = File(modelPath);
-        bytes = await file.readAsBytes();
-        if (kDebugMode) {
-          final sizeMB = (bytes.length / (1024 * 1024)).toStringAsFixed(2);
-          log('File loaded, size: $sizeMB MB', name: "OnnxModelService");
-        }
-      }
-
       // Initialize the ONNX runtime environment in the main isolate
       // This is required before creating a session
       if (kDebugMode) {
@@ -385,21 +365,66 @@ class OnnxModelService {
       }
       OrtEnv.instance.init();
 
-      // Create the session in a separate isolate
-      if (kDebugMode) {
-        log('Creating ONNX session in isolate', name: "OnnxModelService");
-      }
-      final session =
-          await compute(_createSession, ModelInitData(modelPath, bytes));
+      if (isAsset) {
+        // For assets, we need to load the bytes in the main isolate
+        // as rootBundle is not available in compute isolates
+        if (kDebugMode) {
+          log('Reading asset file: $modelPath', name: "OnnxModelService");
+        }
+        final rawAssetFile = await rootBundle.load(modelPath);
+        final bytes = rawAssetFile.buffer.asUint8List();
 
-      // The session will not be null as the _createSession method will throw an exception if it fails
-      _session = session;
+        if (kDebugMode) {
+          final sizeMB = (bytes.length / (1024 * 1024)).toStringAsFixed(2);
+          log('Asset loaded, size: $sizeMB MB', name: "OnnxModelService");
+        }
+
+        // Create session in isolate with the loaded bytes
+        if (kDebugMode) {
+          log('Creating ONNX session from asset in isolate',
+              name: "OnnxModelService");
+        }
+        final session = await compute(
+            _createSessionFromBytes, ModelInitData(modelPath, bytes));
+        _session = session;
+
+        // Suggest garbage collection after session creation
+        await Future.delayed(Duration.zero);
+      } else {
+        // For files, we'll pass only the path and let the isolate read the file directly
+        // This avoids loading the entire file into memory twice
+        if (kDebugMode) {
+          log('Creating ONNX session from file in isolate',
+              name: "OnnxModelService");
+        }
+
+        // Check if file exists before attempting to load
+        final file = File(modelPath);
+        if (!await file.exists()) {
+          _setState(ModelLoadingState.loadingError);
+          throw Exception('Model file not found: $modelPath');
+        }
+
+        // Get file size for logging
+        final fileSize = await file.length();
+        if (kDebugMode) {
+          final sizeMB = (fileSize / (1024 * 1024)).toStringAsFixed(2);
+          log('File size: $sizeMB MB', name: "OnnxModelService");
+        }
+
+        // Create session in isolate passing only the path
+        final session = await compute(
+            _createSessionFromPath, ModelPathData(modelPath, false));
+        _session = session;
+      }
 
       _setState(ModelLoadingState.loaded);
 
+      // Suggest garbage collection after successful loading
+      await Future.delayed(Duration.zero);
+
       if (kDebugMode) {
-        log('ONNX session created successfully in isolate.',
-            name: "OnnxModelService");
+        log('ONNX session created successfully.', name: "OnnxModelService");
       }
     } catch (e) {
       _setState(ModelLoadingState.loadingError);
@@ -411,23 +436,50 @@ class OnnxModelService {
     }
   }
 
-  /// Static method to create an ONNX session in an isolate
-  static Future<OrtSession> _createSession(ModelInitData data) async {
+  /// Static method to create an ONNX session in an isolate from byte array
+  static Future<OrtSession> _createSessionFromBytes(ModelInitData data) async {
     try {
       // Initialize ORT environment in the isolate
       OrtEnv.instance.init();
 
-      // Create session options
-      final sessionOptions = OrtSessionOptions();
+      // Create session options with optimizations
+      final sessionOptions = OrtSessionOptions()
+        ..setIntraOpNumThreads(2); // Limit threads to reduce memory pressure
 
       // Create the session from the model bytes
       final session = OrtSession.fromBuffer(data.modelBytes, sessionOptions);
 
+      // Help the GC know it can reclaim memory
+      //data = null;
+
       return session;
     } catch (e) {
-      if (kDebugMode) {
-        log('Error creating ONNX session in isolate: $e');
-      }
+      throw Exception('Error creating ONNX session in isolate: $e');
+    }
+  }
+
+  /// Static method to create an ONNX session in an isolate from file path
+  static Future<OrtSession> _createSessionFromPath(ModelPathData data) async {
+    try {
+      // Initialize ORT environment in the isolate
+      OrtEnv.instance.init();
+
+      // Create session options with optimizations
+      final sessionOptions = OrtSessionOptions()
+        ..setIntraOpNumThreads(2); // Limit threads to reduce memory pressure
+
+      // Read file in isolate to avoid main thread memory duplication
+      final file = File(data.modelPath);
+      final bytes = await file.readAsBytes();
+
+      // Create the session from the model bytes
+      final session = OrtSession.fromBuffer(bytes, sessionOptions);
+
+      // Help the GC know it can reclaim memory
+      // bytes = null;
+
+      return session;
+    } catch (e) {
       throw Exception('Error creating ONNX session in isolate: $e');
     }
   }
