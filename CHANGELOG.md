@@ -2,21 +2,12 @@
 
 ### Improved:
 
-- Optimized file integrity verification:
+  - Implemented dedicated ModelDownloadService for improved separation of concerns
+  - Added HTTP status code validation to detect invalid URLs or unavailable resources
+  - Implemented file size validation to detect incomplete downloads
   - Implemented memory-efficient chunked file reading for checksum calculation
   - Improved integrity check flow to only verify after successful downloads
   - Added automatic cleanup of partial files when downloads fail
-  - Enhanced progress reporting with detailed size information
-  - Fixed memory leak between verification and model loading
-
-- Reduced memory usage:
-  - Optimized model loading process to minimize memory footprint
-  - Implemented separate optimized paths for asset and file loading
-  - Eliminated redundant memory copies when loading large model files
-  - Added explicit memory management to help garbage collection
-  - Added file existence check before loading to prevent errors
-  - Improved thread management during model initialization
-  - Added explicit garbage collection hints between operations
 
 ## 1.0.2
 

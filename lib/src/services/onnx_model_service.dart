@@ -5,14 +5,19 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 
 import '../models/model_init_data.dart';
+import 'model_download_service.dart';
 
 /// Service for handling ONNX model operations
 class OnnxModelService {
-  OnnxModelService._internal();
+  OnnxModelService._internal() {
+    // Forward download progress from the download service
+    _downloadProgressSubscription = ModelDownloadService
+        .instance.downloadProgressStream
+        .listen(_forwardDownloadProgress);
+  }
 
   static final OnnxModelService _instance = OnnxModelService._internal();
 
@@ -42,6 +47,9 @@ class OnnxModelService {
   Stream<DownloadProgress> get downloadProgressStream =>
       _downloadProgressController.stream;
 
+  /// Subscription to the download service progress stream
+  late StreamSubscription<DownloadProgress> _downloadProgressSubscription;
+
   /// Directory where downloaded models are stored
   String? _modelStorageDirectory;
 
@@ -65,6 +73,11 @@ class OnnxModelService {
   void _setState(ModelLoadingState newState) {
     _currentState = newState;
     _stateController.add(newState);
+  }
+
+  /// Forwards download progress from the download service to our own stream
+  void _forwardDownloadProgress(DownloadProgress progress) {
+    _downloadProgressController.add(progress);
   }
 
   /// Initializes the ONNX environment and creates a session from a URL
@@ -188,6 +201,9 @@ class OnnxModelService {
 
     // Check if the file already exists
     if (await file.exists()) {
+      if (kDebugMode) {
+        log('Model already downloaded: ${file.path}', name: "OnnxModelService");
+      }
       // Verify file integrity with checksum
       final isValid = await _verifyFileIntegrity(file.path, checksum);
 
@@ -202,7 +218,12 @@ class OnnxModelService {
         _setState(ModelLoadingState.downloading);
 
         try {
-          await _downloadModel(url, file.path);
+          // Use ModelDownloadService to download the file
+          await ModelDownloadService.instance.downloadFile(
+            url,
+            file.path,
+            minSize: 1024 * 10, // ONNX models are typically at least 10KB
+          );
 
           // Only verify integrity if download succeeded
           final isNewFileValid =
@@ -226,10 +247,19 @@ class OnnxModelService {
       return file.path;
     }
 
+    if (kDebugMode) {
+      log('Downloading model from $url', name: "OnnxModelService");
+    }
+
     // File doesn't exist, download it
     _setState(ModelLoadingState.downloading);
     try {
-      await _downloadModel(url, file.path);
+      // Use ModelDownloadService to download the file
+      await ModelDownloadService.instance.downloadFile(
+        url,
+        file.path,
+        minSize: 1024 * 10, // ONNX models are typically at least 10KB
+      );
 
       // Only verify downloaded file integrity after successful download
       final isValid = await _verifyFileIntegrity(file.path, checksum);
@@ -252,95 +282,6 @@ class OnnxModelService {
           // Ignore errors when deleting partial files
         }
       }
-      rethrow;
-    }
-  }
-
-  /// Downloads a model from the given URL with progress tracking
-  Future<void> _downloadModel(String url, String savePath) async {
-    try {
-      // Make a HEAD request to get the content length
-      final request = await http.head(Uri.parse(url));
-      final contentLength = int.parse(request.headers['content-length'] ?? '0');
-
-      if (kDebugMode) {
-        final sizeInMB = contentLength > 0
-            ? (contentLength / (1024 * 1024)).toStringAsFixed(2)
-            : 'unknown';
-        log('Downloading model from $url ($sizeInMB MB)',
-            name: "OnnxModelService");
-      }
-
-      // Create a client for the download
-      final client = http.Client();
-      final response = await client.send(http.Request('GET', Uri.parse(url)));
-
-      // Open the output file
-      final file = File(savePath);
-      final sink = file.openWrite();
-
-      // Track download progress
-      int downloaded = 0;
-
-      // Create a completer to wait for the download to finish
-      final completer = Completer<void>();
-
-      // Process the response stream
-      response.stream.listen(
-        (List<int> chunk) {
-          // Write the chunk to the file
-          sink.add(chunk);
-
-          // Update progress
-          downloaded += chunk.length;
-          final progress = contentLength > 0 ? downloaded / contentLength : 0.0;
-
-          // Broadcast progress update
-          _downloadProgressController.add(DownloadProgress(
-            downloaded: downloaded,
-            total: contentLength,
-            progress: progress,
-          ));
-
-          if (kDebugMode && downloaded % (1024 * 1024) < chunk.length) {
-            final downloadedMB =
-                (downloaded / (1024 * 1024)).toStringAsFixed(2);
-            final totalMB = contentLength > 0
-                ? (contentLength / (1024 * 1024)).toStringAsFixed(2)
-                : 'unknown';
-            log('Downloaded $downloadedMB MB / $totalMB MB (${(progress * 100).toStringAsFixed(1)}%)',
-                name: "OnnxModelService");
-          }
-        },
-        onDone: () async {
-          // Ensure all data is written to disk before closing
-          await sink.flush();
-          await sink.close();
-          client.close();
-
-          if (kDebugMode) {
-            log('Download complete: $savePath', name: "OnnxModelService");
-          }
-
-          // Complete the future
-          completer.complete();
-        },
-        onError: (e) {
-          sink.close();
-          client.close();
-          file.deleteSync();
-          completer.completeError(e);
-        },
-        cancelOnError: true,
-      );
-
-      // Wait for the download to complete
-      await completer.future;
-    } catch (e) {
-      if (kDebugMode) {
-        log('Error downloading model: $e', name: "OnnxModelService", error: e);
-      }
-      _setState(ModelLoadingState.downloadError);
       rethrow;
     }
   }
@@ -526,6 +467,12 @@ class OnnxModelService {
         log('ONNX session released.', name: "OnnxModelService");
       }
     }
+
+    // Cancel the download progress subscription
+    _downloadProgressSubscription.cancel();
+
+    // Close the stream controllers
     _stateController.close();
+    _downloadProgressController.close();
   }
 }
