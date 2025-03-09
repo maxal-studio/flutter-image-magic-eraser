@@ -49,6 +49,14 @@ class ModelInitializationError {
   String toString() => 'ModelInitializationError: $message (${errorType.name})';
 }
 
+/// Structure to hold file integrity verification data for isolate
+class FileIntegrityData {
+  final String filePath;
+  final String? expectedChecksum;
+
+  FileIntegrityData(this.filePath, this.expectedChecksum);
+}
+
 /// Structure to hold model data for initialization
 class ModelInitData {
   final String modelPath;

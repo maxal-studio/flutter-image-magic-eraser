@@ -4,3 +4,4 @@ export 'src/models/inpainting_config.dart';
 export 'src/services/polygon_inpainting_service.dart';
 // Export polygon drawing components
 export 'src/image_selector.dart';
+export 'src/models/model_init_data.dart';

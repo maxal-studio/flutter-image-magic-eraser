@@ -101,23 +101,33 @@ class OnnxModelService {
     }
   }
 
-  /// Calculate SHA-256 checksum of a file
-  Future<String> _calculateFileChecksum(String filePath) async {
+  /// Static method for calculating file checksum in an isolate
+  static Future<String> _calculateChecksumInIsolate(String filePath) async {
     final file = File(filePath);
     if (!await file.exists()) {
       throw Exception('File does not exist: $filePath');
     }
 
+    final fileBytes = await file.readAsBytes();
+    final digest = sha256.convert(fileBytes);
+    return digest.toString();
+  }
+
+  /// Static method for verifying file integrity in an isolate
+  static Future<bool> _verifyFileIntegrityInIsolate(
+      FileIntegrityData data) async {
+    // If no checksum is provided, assume file is valid
+    if (data.expectedChecksum == null) {
+      return true;
+    }
+
     try {
-      final fileBytes = await file.readAsBytes();
-      final digest = sha256.convert(fileBytes);
-      return digest.toString();
+      final actualChecksum = await _calculateChecksumInIsolate(data.filePath);
+      return actualChecksum.toLowerCase() ==
+          data.expectedChecksum!.toLowerCase();
     } catch (e) {
-      if (kDebugMode) {
-        log('Error calculating checksum: $e',
-            name: "OnnxModelService", error: e);
-      }
-      rethrow;
+      // Return false on any error
+      return false;
     }
   }
 
@@ -134,9 +144,14 @@ class OnnxModelService {
     }
 
     try {
-      final actualChecksum = await _calculateFileChecksum(filePath);
-      final isValid =
-          actualChecksum.toLowerCase() == expectedChecksum.toLowerCase();
+      if (kDebugMode) {
+        log('Starting checksum verification for: $filePath',
+            name: "OnnxModelService");
+      }
+
+      // Run the verification in a background isolate
+      final isValid = await compute(_verifyFileIntegrityInIsolate,
+          FileIntegrityData(filePath, expectedChecksum));
 
       if (kDebugMode) {
         if (isValid) {
@@ -146,7 +161,6 @@ class OnnxModelService {
           log('Checksum verification failed: $filePath',
               name: "OnnxModelService");
           log('Expected: $expectedChecksum', name: "OnnxModelService");
-          log('Actual: $actualChecksum', name: "OnnxModelService");
         }
       }
 
@@ -235,7 +249,10 @@ class OnnxModelService {
       final contentLength = int.parse(request.headers['content-length'] ?? '0');
 
       if (kDebugMode) {
-        log('Downloading model from $url (${contentLength ~/ 1024} KB)',
+        final sizeInMB = contentLength > 0
+            ? (contentLength / (1024 * 1024)).toStringAsFixed(2)
+            : 'unknown';
+        log('Downloading model from $url ($sizeInMB MB)',
             name: "OnnxModelService");
       }
 
@@ -271,7 +288,12 @@ class OnnxModelService {
           ));
 
           if (kDebugMode && downloaded % (1024 * 1024) < chunk.length) {
-            log('Downloaded ${downloaded ~/ 1024} KB (${(progress * 100).toStringAsFixed(1)}%)',
+            final downloadedMB =
+                (downloaded / (1024 * 1024)).toStringAsFixed(2);
+            final totalMB = contentLength > 0
+                ? (contentLength / (1024 * 1024)).toStringAsFixed(2)
+                : 'unknown';
+            log('Downloaded $downloadedMB MB / $totalMB MB (${(progress * 100).toStringAsFixed(1)}%)',
                 name: "OnnxModelService");
           }
         },
@@ -316,23 +338,48 @@ class OnnxModelService {
     try {
       _setState(ModelLoadingState.loading);
 
+      if (kDebugMode) {
+        log('Loading model from ${isAsset ? "asset" : "file"}: $modelPath',
+            name: "OnnxModelService");
+      }
+
       Uint8List bytes;
 
       if (isAsset) {
         // Load the model bytes from an asset in the main isolate
+        if (kDebugMode) {
+          log('Reading asset file: $modelPath', name: "OnnxModelService");
+        }
         final rawAssetFile = await rootBundle.load(modelPath);
         bytes = rawAssetFile.buffer.asUint8List();
+        if (kDebugMode) {
+          final sizeMB = (bytes.length / (1024 * 1024)).toStringAsFixed(2);
+          log('Asset loaded, size: $sizeMB MB', name: "OnnxModelService");
+        }
       } else {
         // Load the model bytes from a file in the main isolate
+        if (kDebugMode) {
+          log('Reading file: $modelPath', name: "OnnxModelService");
+        }
         final file = File(modelPath);
         bytes = await file.readAsBytes();
+        if (kDebugMode) {
+          final sizeMB = (bytes.length / (1024 * 1024)).toStringAsFixed(2);
+          log('File loaded, size: $sizeMB MB', name: "OnnxModelService");
+        }
       }
 
       // Initialize the ONNX runtime environment in the main isolate
       // This is required before creating a session
+      if (kDebugMode) {
+        log('Initializing ONNX runtime environment', name: "OnnxModelService");
+      }
       OrtEnv.instance.init();
 
       // Create the session in a separate isolate
+      if (kDebugMode) {
+        log('Creating ONNX session in isolate', name: "OnnxModelService");
+      }
       final session =
           await compute(_createSession, ModelInitData(modelPath, bytes));
 
