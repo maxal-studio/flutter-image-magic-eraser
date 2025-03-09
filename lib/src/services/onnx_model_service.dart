@@ -194,20 +194,22 @@ class OnnxModelService {
         // Delete corrupted file and download again
         await file.delete();
         _setState(ModelLoadingState.downloading);
+
         try {
           await _downloadModel(url, file.path);
+
+          // Only verify integrity if download succeeded
+          final isNewFileValid =
+              await _verifyFileIntegrity(file.path, checksum);
+          if (!isNewFileValid) {
+            _setState(ModelLoadingState.checksumError);
+            throw Exception(
+                'Downloaded model file failed integrity check. Expected checksum: $checksum');
+          }
         } catch (e) {
           // Set download error state and rethrow
           _setState(ModelLoadingState.downloadError);
           rethrow;
-        }
-
-        // Verify the newly downloaded file
-        final isNewFileValid = await _verifyFileIntegrity(file.path, checksum);
-        if (!isNewFileValid) {
-          _setState(ModelLoadingState.checksumError);
-          throw Exception(
-              'Downloaded model file failed integrity check. Expected checksum: $checksum');
         }
       } else {
         if (kDebugMode) {
@@ -222,23 +224,30 @@ class OnnxModelService {
     _setState(ModelLoadingState.downloading);
     try {
       await _downloadModel(url, file.path);
+
+      // Only verify downloaded file integrity after successful download
+      final isValid = await _verifyFileIntegrity(file.path, checksum);
+      if (!isValid) {
+        // Clean up invalid file
+        await file.delete();
+        _setState(ModelLoadingState.checksumError);
+        throw Exception(
+            'Downloaded model file failed integrity check. Expected checksum: $checksum');
+      }
+
+      return file.path;
     } catch (e) {
-      // Set download error state and rethrow
+      // Set download error state and clean up any partial file
       _setState(ModelLoadingState.downloadError);
+      if (await file.exists()) {
+        try {
+          await file.delete();
+        } catch (_) {
+          // Ignore errors when deleting partial files
+        }
+      }
       rethrow;
     }
-
-    // Verify downloaded file integrity
-    final isValid = await _verifyFileIntegrity(file.path, checksum);
-    if (!isValid) {
-      // Clean up invalid file
-      await file.delete();
-      _setState(ModelLoadingState.checksumError);
-      throw Exception(
-          'Downloaded model file failed integrity check. Expected checksum: $checksum');
-    }
-
-    return file.path;
   }
 
   /// Downloads a model from the given URL with progress tracking

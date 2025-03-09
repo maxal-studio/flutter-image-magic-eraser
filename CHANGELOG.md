@@ -1,3 +1,12 @@
+## 1.0.3
+
+### Improved:
+
+- Optimized file integrity verification:
+  - Improved integrity check flow to only verify after successful downloads
+  - Added automatic cleanup of partial files when downloads fail
+  - Enhanced progress reporting with detailed size information
+
 ## 1.0.2
 
 ### Improved:

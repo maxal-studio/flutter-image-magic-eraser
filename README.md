@@ -130,7 +130,7 @@ InpaintingService.instance.modelLoadingStateStream.listen((state) {
       // Generic error occurred
       break;
     case ModelLoadingState.downloadError:
-      // Error downloading the model (network issues)
+      // Error downloading the model (network/url issues)
       break;
     case ModelLoadingState.checksumError:
       // Model integrity verification failed
@@ -140,78 +140,6 @@ InpaintingService.instance.modelLoadingStateStream.listen((state) {
       break;
   }
 });
-
-// Example usage in a StatefulWidget
-class _MyWidgetState extends State<MyWidget> {
-  StreamSubscription<ModelLoadingState>? _modelLoadingSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    // Subscribe to model loading state changes
-    _modelLoadingSubscription = 
-        InpaintingService.instance.modelLoadingStateStream.listen((state) {
-      setState(() {
-        // Update UI based on state
-        String message = '';
-        switch (state) {
-          case ModelLoadingState.notLoaded:
-            message = 'Model not loaded';
-            break;
-          case ModelLoadingState.downloading:
-            message = 'Downloading model...';
-            break;
-          case ModelLoadingState.loading:
-            message = 'Loading model...';
-            break;
-          case ModelLoadingState.loaded:
-            message = 'Model ready to use';
-            break;
-          case ModelLoadingState.error:
-            message = 'An error occurred';
-            break;
-          case ModelLoadingState.downloadError:
-            message = 'Network error. Please check your connection.';
-            break;
-          case ModelLoadingState.checksumError:
-            message = 'Model integrity check failed.';
-            break;
-          case ModelLoadingState.loadingError:
-            message = 'Error loading model. Format may be incompatible.';
-            break;
-        }
-        // Use message to update UI
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _modelLoadingSubscription?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final modelState = InpaintingService.instance.modelLoadingState;
-    
-    // Show different UI based on model state
-    if (modelState == ModelLoadingState.loaded) {
-      return const Text('Ready to use');
-    } else if (modelState == ModelLoadingState.downloading || 
-              modelState == ModelLoadingState.loading) {
-      return const CircularProgressIndicator();
-    } else if (modelState == ModelLoadingState.downloadError) {
-      return const Text('Network error. Check your connection and try again.');
-    } else if (modelState == ModelLoadingState.checksumError) {
-      return const Text('Model integrity check failed. Try downloading again.');
-    } else if (modelState == ModelLoadingState.loadingError) {
-      return const Text('Error loading model. Format may be incompatible.');
-    } else {
-      return const Text('Model not loaded');
-    }
-  }
-}
 ```
 
 ### Method : Inpainting with Polygons 
