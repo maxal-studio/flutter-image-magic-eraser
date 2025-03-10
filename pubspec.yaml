@@ -14,6 +14,10 @@ topics:
   - lama-model
   - inpainting
 
+screenshots:
+  - description: 'Example usage of the ImageMaskSelector widget'
+    path: doc/demo.gif
+
 dependencies:
   flutter:
     sdk: flutter
