@@ -3,8 +3,9 @@ import 'dart:developer';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
 
-import 'models.dart';
+import 'models.dart' as tensor_models;
 
 /// Handles tensor-related image processing operations
 class TensorProcessor {
@@ -19,7 +20,7 @@ class TensorProcessor {
     // Process in isolate for better performance
     return compute(
       _imageToFloatTensorIsolate,
-      TensorParams(rgbaBytes: rgbaBytes, pixelCount: pixelCount),
+      tensor_models.TensorParams(rgbaBytes: rgbaBytes, pixelCount: pixelCount),
     );
   }
 
@@ -35,7 +36,7 @@ class TensorProcessor {
     // Process in isolate for better performance
     final result = await compute(
       _maskToFloatTensorIsolate,
-      MaskParams(
+      tensor_models.MaskParams(
         rgbaBytes: rgbaBytes,
         pixelCount: pixelCount,
         debugMode: kDebugMode,
@@ -64,7 +65,7 @@ class TensorProcessor {
     // Process in isolate for better performance
     final outputRgbaBytes = await compute(
       _rgbTensorToRgbaIsolate,
-      RgbTensorParams(
+      tensor_models.RgbTensorParams(
         rgbOutput: rgbOutput,
         width: width,
         height: height,
@@ -81,10 +82,146 @@ class TensorProcessor {
 
     return completer.future;
   }
+
+  /// Converts an img.Image to a floating-point tensor
+  ///
+  /// This method converts an image package Image directly to a float tensor,
+  /// avoiding the creation of intermediate ui.Image objects.
+  ///
+  /// - [image]: The img.Image to convert
+  /// - Returns: A list of floating-point values representing the RGB channels
+  static Future<List<double>> imgImageToFloatTensor(img.Image image) async {
+    if (kDebugMode) {
+      log('Converting image to tensor with dimensions: ${image.width}x${image.height}',
+          name: 'TensorProcessor');
+      log('Image format: ${image.format}, Channels: ${image.numChannels}',
+          name: 'TensorProcessor');
+    }
+
+    // Ensure we have an RGBA image
+    img.Image rgbaImage;
+    if (image.numChannels != 4) {
+      if (kDebugMode) {
+        log('Converting image to RGBA format', name: 'TensorProcessor');
+      }
+      // Create a new RGBA image
+      rgbaImage =
+          img.Image(width: image.width, height: image.height, numChannels: 4);
+
+      // Copy the RGB data and add alpha channel
+      for (int y = 0; y < image.height; y++) {
+        for (int x = 0; x < image.width; x++) {
+          final pixel = image.getPixel(x, y);
+          final r = pixel.r.toInt();
+          final g = pixel.g.toInt();
+          final b = pixel.b.toInt();
+          rgbaImage.setPixel(
+              x, y, img.ColorRgba8(r, g, b, 255)); // Alpha (fully opaque)
+        }
+      }
+    } else {
+      rgbaImage = image;
+    }
+
+    final pixelCount = rgbaImage.width * rgbaImage.height;
+    final rgbaBytes = rgbaImage.data!.buffer.asUint8List();
+
+    if (rgbaBytes.length != pixelCount * 4) {
+      throw Exception(
+        "Invalid RGBA data: expected ${pixelCount * 4} bytes, got ${rgbaBytes.length}",
+      );
+    }
+
+    // Process in isolate for better performance
+    return compute(
+      _imageToFloatTensorIsolate,
+      tensor_models.TensorParams(
+        rgbaBytes: rgbaBytes,
+        pixelCount: pixelCount,
+      ),
+    );
+  }
+
+  /// Converts an RGB tensor to img.Image
+  ///
+  /// This method processes the RGB tensor output and converts it directly into
+  /// an img.Image object, avoiding the creation of intermediate ui.Image objects.
+  ///
+  /// - [rgbOutput]: The RGB tensor output from the model.
+  /// - Returns: An img.Image object containing the RGBA pixel data.
+  static Future<img.Image> rgbTensorToImgImage(
+      List<List<List<double>>> rgbOutput) async {
+    // Get dimensions from the tensor
+    final height = rgbOutput[0].length;
+    final width = rgbOutput[0][0].length;
+
+    if (kDebugMode) {
+      log('Converting tensor with dimensions: ${rgbOutput.length}x${height}x$width',
+          name: 'TensorProcessor');
+    }
+
+    // Process in isolate for better performance
+    final outputRgbaBytes = await compute(
+      _rgbTensorToRgbaIsolate,
+      tensor_models.RgbTensorParams(
+        rgbOutput: rgbOutput,
+        width: width,
+        height: height,
+      ),
+    );
+
+    // Create an img.Image from the RGBA bytes
+    return img.Image.fromBytes(
+      width: width,
+      height: height,
+      bytes: outputRgbaBytes.buffer,
+      order: img.ChannelOrder.rgba,
+    );
+  }
+
+  /// Converts an img.Image mask to a float tensor
+  ///
+  /// This method converts a binary mask image directly to a float tensor,
+  /// ensuring the output is purely black and white (0.0 or 1.0).
+  ///
+  /// - [mask]: The img.Image mask to convert
+  /// - Returns: A list of floating-point values (0.0 or 1.0) representing the binary mask
+  static Future<List<double>> imgMaskToFloatTensor(img.Image mask) async {
+    if (kDebugMode) {
+      log('Converting mask to tensor with dimensions: ${mask.width}x${mask.height}',
+          name: 'TensorProcessor');
+    }
+
+    final pixelCount = mask.width * mask.height;
+    final rgbaBytes = mask.data!.buffer.asUint8List();
+
+    if (rgbaBytes.length != pixelCount * 4) {
+      throw Exception(
+        "Invalid RGBA data: expected ${pixelCount * 4} bytes, got ${rgbaBytes.length}",
+      );
+    }
+
+    // Process in isolate for better performance
+    final result = await compute(
+      _maskToFloatTensorIsolate,
+      tensor_models.MaskParams(
+        rgbaBytes: rgbaBytes,
+        pixelCount: pixelCount,
+        debugMode: kDebugMode,
+      ),
+    );
+
+    if (kDebugMode && result.debugInfo != null) {
+      log('Mask tensor conversion complete. ${result.debugInfo}',
+          name: 'TensorProcessor');
+    }
+
+    return result.floats;
+  }
 }
 
 /// Converts an image to a float tensor in an isolate
-List<double> _imageToFloatTensorIsolate(TensorParams params) {
+List<double> _imageToFloatTensorIsolate(tensor_models.TensorParams params) {
   final floats = List<double>.filled(params.pixelCount * 3, 0);
   final pixelCount = params.pixelCount;
 
@@ -98,40 +235,57 @@ List<double> _imageToFloatTensorIsolate(TensorParams params) {
   return floats;
 }
 
-/// Converts a mask to a float tensor in an isolate
-MaskResult _maskToFloatTensorIsolate(MaskParams params) {
-  final floats = List<double>.filled(params.pixelCount, 0);
+/// Isolate function to convert RGBA bytes to a float tensor for mask
+tensor_models.MaskResult _maskToFloatTensorIsolate(
+    tensor_models.MaskParams params) {
+  if (params.debugMode) {
+    log('Starting mask tensor conversion in isolate', name: 'TensorProcessor');
+  }
+
+  final rgbaBytes = params.rgbaBytes;
+  final pixelCount = params.pixelCount;
+  final result = List<double>.filled(pixelCount, 0.0);
   int nonZeroCount = 0;
 
-  // Use a more efficient loop structure
-  for (int i = 0, j = 0; i < params.pixelCount; i++, j += 4) {
-    // Calculate grayscale value using standard luminance formula
-    final r = params.rgbaBytes[j];
-    final g = params.rgbaBytes[j + 1];
-    final b = params.rgbaBytes[j + 2];
-    final luminance = (0.299 * r + 0.587 * g + 0.114 * b);
+  if (params.debugMode) {
+    log('Processing $pixelCount pixels for mask tensor',
+        name: 'TensorProcessor');
+  }
 
-    // Apply threshold to get binary value (0 or 1)
-    final value = luminance > 128 ? 1.0 : 0.0;
-    floats[i] = value;
-
-    if (params.debugMode && value > 0) {
-      nonZeroCount++;
+  for (int i = 0; i < pixelCount; i++) {
+    final byteIndex = i * 4;
+    if (byteIndex + 2 >= rgbaBytes.length) {
+      if (params.debugMode) {
+        log('Warning: Reached end of bytes array prematurely',
+            name: 'TensorProcessor');
+      }
+      break;
     }
+
+    // Calculate luminance using standard coefficients
+    final r = rgbaBytes[byteIndex] / 255.0;
+    final g = rgbaBytes[byteIndex + 1] / 255.0;
+    final b = rgbaBytes[byteIndex + 2] / 255.0;
+    final luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+
+    // Convert to binary (0.0 or 1.0) using threshold
+    result[i] = luminance > 0.5 ? 1.0 : 0.0;
+    if (result[i] > 0.0) nonZeroCount++;
   }
 
   String? debugInfo;
   if (params.debugMode) {
-    final percentNonZero = (nonZeroCount / params.pixelCount) * 100;
+    final percentNonZero = (nonZeroCount / pixelCount) * 100;
     debugInfo =
-        '$nonZeroCount/${params.pixelCount} non-zero pixels (${percentNonZero.toStringAsFixed(2)}%)';
+        '$nonZeroCount/$pixelCount non-zero pixels (${percentNonZero.toStringAsFixed(2)}%)';
+    log('Mask tensor conversion complete. $debugInfo', name: 'TensorProcessor');
   }
 
-  return MaskResult(floats: floats, debugInfo: debugInfo);
+  return tensor_models.MaskResult(floats: result, debugInfo: debugInfo);
 }
 
 /// Converts an RGB tensor to RGBA bytes in an isolate
-Uint8List _rgbTensorToRgbaIsolate(RgbTensorParams params) {
+Uint8List _rgbTensorToRgbaIsolate(tensor_models.RgbTensorParams params) {
   final outputRgbaBytes = Uint8List(params.width * params.height * 4);
 
   // Process in row-major order for better cache locality

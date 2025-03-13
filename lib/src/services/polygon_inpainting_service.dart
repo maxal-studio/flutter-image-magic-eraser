@@ -4,14 +4,16 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_magic_eraser/src/services/image_package_service.dart';
+import 'package:image_magic_eraser/src/services/image_processing/tensor_processor.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
 import '../models/bounding_box.dart';
 import '../models/inpainting_config.dart';
 import '../utils/image_disposal_util.dart';
 import 'image_processing_service.dart';
-import 'mask_generation_service.dart';
 import 'onnx_model_service.dart';
+import 'package:image/image.dart' as img;
 
 /// Service for polygon-based inpainting
 ///
@@ -52,23 +54,15 @@ class PolygonInpaintingService {
 
     try {
       // Decode the input image
-      final originalImage = await decodeImageFromList(imageBytes);
+      img.Image originalImage = img.decodeImage(imageBytes)!;
 
-      // Process each polygon
-      ui.Image resultImage = originalImage;
       for (final polygon in polygons) {
-        ui.Image previousImage = resultImage;
         // Inpaint the polygon
-        resultImage = await _inpaintPolygon(resultImage, polygon, cfg);
-
-        // Dispose previous iteration image if not the original
-        if (previousImage != originalImage) {
-          ImageDisposalUtil.disposeImage(previousImage);
-        }
+        originalImage = await _inpaintPolygon(originalImage, polygon, cfg);
       }
 
       // Return the final result (this will be disposed by the caller)
-      return resultImage;
+      return ImagePackageService.instance.convertImageToUiImage(originalImage);
     } catch (e) {
       if (kDebugMode) {
         log('Error in inpaintPolygons: $e',
@@ -90,18 +84,18 @@ class PolygonInpaintingService {
   /// 7. Applying the inpainted patch precisely within the polygon boundaries
   ///
   /// The result is an image where only the area inside the polygon has been inpainted.
-  Future<ui.Image> _inpaintPolygon(
-    ui.Image image,
+  Future<img.Image> _inpaintPolygon(
+    img.Image image,
     List<Map<String, double>> polygon,
     InpaintingConfig config,
   ) async {
-    ui.Image? croppedImage;
-    ui.Image? maskImage;
-    ui.Image? resizedImage;
-    ui.Image? resizedMask;
-    ui.Image? inpaintedPatch;
-    ui.Image? finalPatch;
-    ui.Image? result;
+    img.Image? packagedImage;
+    img.Image? packagedImageCropped;
+    img.Image? packagedMask;
+    img.Image? inpaintedPackagedImage;
+    img.Image? inpaintedPatchFinalImage;
+
+    packagedImage = image;
 
     try {
       // 1. Compute bounding box around the polygon
@@ -127,16 +121,27 @@ class PolygonInpaintingService {
         );
       }
 
-      // 3. Crop the original image using the adjusted bbox
-      croppedImage = await _cropImage(
-        image,
-        expandedBox,
-      );
+      // 3. Crop the image if needed
+      if (expandedBox.x != 0 ||
+          expandedBox.y != 0 ||
+          expandedBox.width != image.width ||
+          expandedBox.height != image.height) {
+        packagedImageCropped = ImagePackageService.instance.cropImage(
+          packagedImage,
+          expandedBox.x,
+          expandedBox.y,
+          expandedBox.width,
+          expandedBox.height,
+        );
+      } else {
+        packagedImageCropped = packagedImage;
+      }
 
       // Generate mask for the polygon
       final polygonRelativeToBox = _adjustPolygonToBox(polygon, expandedBox);
 
-      maskImage = await MaskGenerationService.instance.generateMask(
+      // 4. Generate mask
+      packagedMask = ImagePackageService.instance.generateMask(
         [polygonRelativeToBox],
         expandedBox.width,
         expandedBox.height,
@@ -144,75 +149,67 @@ class PolygonInpaintingService {
         fillColor: Colors.white,
       );
 
-      // 4. Resize to input_size if needed
+      // 5. Resize if needed
+      img.Image? resizedPackagedImage = packagedImageCropped;
+      img.Image? resizedPackagedMask = packagedMask;
       if (expandedBox.width != config.inputSize ||
           expandedBox.height != config.inputSize) {
-        // Use a safer resizing method
-        resizedImage = await _safeResizeImage(
-          croppedImage,
+        resizedPackagedImage = ImagePackageService.instance.resizeImage(
+          packagedImageCropped,
           config.inputSize,
           config.inputSize,
+          useBilinear: true,
         );
 
-        resizedMask = await _safeResizeImage(
-          maskImage,
+        resizedPackagedMask = ImagePackageService.instance.resizeImage(
+          packagedMask,
           config.inputSize,
           config.inputSize,
+          useBilinear: false,
         );
-      } else {
-        resizedImage = croppedImage;
-        resizedMask = maskImage;
+
+        // Dispose the cropped images
+        packagedImageCropped = null;
+        packagedMask = null;
       }
 
-      // 5. Send to ONNX model for inpainting
-      inpaintedPatch = await _runInference(resizedImage, resizedMask);
+      // // 6. Run inference
+      inpaintedPackagedImage = await _runInference(
+        resizedPackagedImage,
+        resizedPackagedMask,
+      );
 
-      // If the patch was resized, resize it back to the original bbox size
+      // Dispose the resized images
+      resizedPackagedImage = null;
+      resizedPackagedMask = null;
+
+      // 7. Resize patch back if needed
       if (expandedBox.width != config.inputSize ||
           expandedBox.height != config.inputSize) {
-        finalPatch = await _safeResizeImage(
-          inpaintedPatch,
+        inpaintedPatchFinalImage = ImagePackageService.instance.resizeImage(
+          inpaintedPackagedImage,
           expandedBox.width,
           expandedBox.height,
+          useBilinear: true,
         );
-        // Dispose inpaintedPatch as we no longer need it
-        ImageDisposalUtil.disposeImage(inpaintedPatch);
-        inpaintedPatch = null;
       } else {
-        finalPatch = inpaintedPatch;
-        inpaintedPatch = null; // Avoid double disposal
+        inpaintedPatchFinalImage = inpaintedPackagedImage;
       }
 
-      // 6. Apply inpainted patch only within the polygon area
-      result = await _blendPatchIntoImage(
-        image,
-        finalPatch,
+      // // 8. Apply inpainted patch
+      return ImagePackageService.instance.blendImgPatchIntoImage(
+        packagedImage,
+        inpaintedPatchFinalImage,
         expandedBox,
         polygon,
       );
-
-      return result;
     } catch (e) {
+      debugPrint('-------Error in _inpaintPolygon: $e');
       if (kDebugMode) {
         log('Error in _inpaintPolygon: $e',
             name: 'PolygonInpaintingService', error: e);
       }
       rethrow;
-    } finally {
-      // Dispose all temporary images
-      List<ui.Image?> imagesToDispose = [
-        croppedImage,
-        maskImage,
-        // Only dispose resizedImage if it's different from croppedImage
-        resizedImage != croppedImage ? resizedImage : null,
-        // Only dispose resizedMask if it's different from maskImage
-        resizedMask != maskImage ? resizedMask : null,
-        inpaintedPatch,
-        // Only dispose finalPatch if it's different from inpaintedPatch
-        finalPatch != inpaintedPatch ? finalPatch : null,
-      ];
-
-      ImageDisposalUtil.disposeImages(imagesToDispose);
     }
   }
 
@@ -259,55 +256,6 @@ class PolygonInpaintingService {
     }
   }
 
-  /// Crops an image to the specified rectangle
-  Future<ui.Image> _cropImage(
-    ui.Image image,
-    BoundingBox box,
-  ) async {
-    try {
-      final x = box.x;
-      final y = box.y;
-      final width = box.width;
-      final height = box.height;
-
-      // Ensure the crop rectangle is within the image bounds
-      final safeX = x.clamp(0, image.width - 1);
-      final safeY = y.clamp(0, image.height - 1);
-      final safeWidth = width.clamp(1, image.width - safeX);
-      final safeHeight = height.clamp(1, image.height - safeY);
-
-      if (kDebugMode &&
-          (safeX != x ||
-              safeY != y ||
-              safeWidth != width ||
-              safeHeight != height)) {
-        log('Adjusted crop rectangle from ($x,$y,$width,$height) to ($safeX,$safeY,$safeWidth,$safeHeight)',
-            name: 'PolygonInpaintingService');
-      }
-
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-
-      // Draw the portion of the image we want to crop
-      canvas.drawImageRect(
-        image,
-        Rect.fromLTWH(safeX.toDouble(), safeY.toDouble(), safeWidth.toDouble(),
-            safeHeight.toDouble()),
-        Rect.fromLTWH(0, 0, safeWidth.toDouble(), safeHeight.toDouble()),
-        Paint()..filterQuality = FilterQuality.high,
-      );
-
-      final picture = recorder.endRecording();
-      return await picture.toImage(safeWidth, safeHeight);
-    } catch (e) {
-      if (kDebugMode) {
-        log('Error in _cropImage: $e',
-            name: 'PolygonInpaintingService', error: e);
-      }
-      rethrow;
-    }
-  }
-
   /// Adjusts polygon points to be relative to the bounding box
   List<Map<String, double>> _adjustPolygonToBox(
     List<Map<String, double>> polygon,
@@ -322,9 +270,9 @@ class PolygonInpaintingService {
   }
 
   /// Runs inference on the ONNX model
-  Future<ui.Image> _runInference(
-    ui.Image image,
-    ui.Image mask,
+  Future<img.Image> _runInference(
+    img.Image image,
+    img.Image mask,
   ) async {
     try {
       // Check if the model is loaded
@@ -333,14 +281,9 @@ class PolygonInpaintingService {
             'ONNX model not initialized. Call initializeOrt first.');
       }
 
-      // Convert mask to grayscale
-      final grayscaleMask = mask;
-
       // Convert to tensors
-      final rgbFloats =
-          await ImageProcessingService.instance.imageToFloatTensor(image);
-      final maskFloats = await ImageProcessingService.instance
-          .maskToFloatTensor(grayscaleMask);
+      final rgbFloats = await TensorProcessor.imgImageToFloatTensor(image);
+      final maskFloats = await TensorProcessor.imgMaskToFloatTensor(mask);
 
       // Create tensors for ONNX model
       final imageTensor = OrtValueTensor.createTensorWithDataList(
@@ -369,7 +312,7 @@ class PolygonInpaintingService {
       final outputTensor = outputs?[0]?.value;
       if (outputTensor is List) {
         final output = outputTensor[0];
-        return await ImageProcessingService.instance.rgbTensorToUIImage(output);
+        return await TensorProcessor.rgbTensorToImgImage(output);
       } else {
         throw Exception('Unexpected output format from ONNX model.');
       }
@@ -380,102 +323,6 @@ class PolygonInpaintingService {
       }
       rethrow;
     }
-  }
-
-  /// Creates a path from a polygon
-  Path _createPolygonPath(List<Map<String, double>> polygon) {
-    final polygonPath = Path();
-
-    if (polygon.isNotEmpty) {
-      // Start at the first point
-      polygonPath.moveTo(
-        polygon[0]['x']!.toDouble(),
-        polygon[0]['y']!.toDouble(),
-      );
-
-      // Add lines to each subsequent point
-      for (int i = 1; i < polygon.length; i++) {
-        polygonPath.lineTo(
-          polygon[i]['x']!.toDouble(),
-          polygon[i]['y']!.toDouble(),
-        );
-      }
-
-      // Close the path
-      polygonPath.close();
-    }
-
-    return polygonPath;
-  }
-
-  /// Blends a patch within a polygon boundary
-  Future<ui.Image> _blendPatchWithinPolygon(
-    ui.Image originalImage,
-    ui.Image patch,
-    BoundingBox box,
-    List<Map<String, double>> polygon, [
-    String debugTag = '',
-  ]) async {
-    try {
-      // Create a picture recorder
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-
-      // Draw the original image as the base
-      canvas.drawImage(originalImage, Offset.zero, Paint());
-
-      // Save the canvas state before clipping
-      canvas.save();
-
-      // Create and apply the polygon clip path
-      final polygonPath = _createPolygonPath(polygon);
-      canvas.clipPath(polygonPath);
-
-      // Draw the patch at the correct position with high quality
-      // This will only affect the area inside the polygon clip
-      canvas.drawImageRect(
-        patch,
-        Rect.fromLTWH(0, 0, patch.width.toDouble(), patch.height.toDouble()),
-        Rect.fromLTWH(
-          box.x.toDouble(),
-          box.y.toDouble(),
-          box.width.toDouble(),
-          box.height.toDouble(),
-        ),
-        Paint()
-          ..filterQuality = FilterQuality.high
-          ..isAntiAlias = true,
-      );
-
-      // Restore the canvas state
-      canvas.restore();
-
-      // Convert to an image
-      final picture = recorder.endRecording();
-      return await picture.toImage(originalImage.width, originalImage.height);
-    } catch (e) {
-      if (kDebugMode) {
-        final logTag = debugTag.isNotEmpty
-            ? '$debugTag - _blendPatchWithinPolygon'
-            : '_blendPatchWithinPolygon';
-        log('Error in $logTag: $e', name: 'PolygonInpaintingService', error: e);
-      }
-      rethrow;
-    }
-  }
-
-  /// Blends an inpainted patch back into the original image
-  ///
-  /// This method draws the inpainted patch only within the polygon area,
-  /// ensuring that only the masked region is affected by the inpainting.
-  Future<ui.Image> _blendPatchIntoImage(
-    ui.Image originalImage,
-    ui.Image patch,
-    BoundingBox box,
-    List<Map<String, double>> polygon, // Original polygon for clipping
-  ) async {
-    return _blendPatchWithinPolygon(
-        originalImage, patch, box, polygon, '_blendPatchIntoImage');
   }
 
   /// Generates debug images for each step of the inpainting process
@@ -538,51 +385,90 @@ class PolygonInpaintingService {
             );
           }
 
+          // Convert current image to img.Image for processing
+          final img.Image packagedImage = await ImagePackageService.instance
+              .convertUiImageToImgImage(currentImage);
+
           // 3. Crop the current image using the adjusted bbox
-          croppedImage = await _cropImage(
-            currentImage,
-            expandedBox,
-          );
+          img.Image croppedPackagedImage;
+          if (expandedBox.x != 0 ||
+              expandedBox.y != 0 ||
+              expandedBox.width != currentImage.width ||
+              expandedBox.height != currentImage.height) {
+            croppedPackagedImage = ImagePackageService.instance.cropImage(
+              packagedImage,
+              expandedBox.x,
+              expandedBox.y,
+              expandedBox.width,
+              expandedBox.height,
+            );
+          } else {
+            croppedPackagedImage = packagedImage;
+          }
+
+          // Convert back to ui.Image for debug output
+          croppedImage = await ImagePackageService.instance
+              .convertImageToUiImage(croppedPackagedImage);
           debugImages['cropped_$polyIndex'] = croppedImage;
 
           // Generate mask for the polygon
           final polygonRelativeToBox =
               _adjustPolygonToBox(polygon, expandedBox);
 
-          maskImage = await MaskGenerationService.instance.generateMask(
+          // 4. Generate mask using ImagePackageService
+          img.Image packagedMask = ImagePackageService.instance.generateMask(
             [polygonRelativeToBox],
             expandedBox.width,
             expandedBox.height,
             backgroundColor: Colors.black,
             fillColor: Colors.white,
           );
+
+          // Convert mask to ui.Image for debug output
+          maskImage = await ImagePackageService.instance
+              .convertImageToUiImage(packagedMask);
           debugImages['mask_$polyIndex'] = maskImage;
 
-          // 4. Resize to input_size if needed
+          // 5. Resize if needed
+          img.Image resizedPackagedImage = croppedPackagedImage;
+          img.Image resizedPackagedMask = packagedMask;
           if (expandedBox.width != cfg.inputSize ||
               expandedBox.height != cfg.inputSize) {
-            // Resize the image and mask
-            resizedImage = await _safeResizeImage(
-              croppedImage,
+            resizedPackagedImage = ImagePackageService.instance.resizeImage(
+              croppedPackagedImage,
               cfg.inputSize,
               cfg.inputSize,
+              useBilinear: true,
             );
+
+            resizedPackagedMask = ImagePackageService.instance.resizeImage(
+              packagedMask,
+              cfg.inputSize,
+              cfg.inputSize,
+              useBilinear: false,
+            );
+
+            // Convert resized images to ui.Image for debug output
+            resizedImage = await ImagePackageService.instance
+                .convertImageToUiImage(resizedPackagedImage);
             debugImages['resized_image_$polyIndex'] = resizedImage;
 
-            resizedMask = await _safeResizeImage(
-              maskImage,
-              cfg.inputSize,
-              cfg.inputSize,
-            );
+            resizedMask = await ImagePackageService.instance
+                .convertImageToUiImage(resizedPackagedMask);
             debugImages['resized_mask_$polyIndex'] = resizedMask;
           } else {
             resizedImage = croppedImage;
             resizedMask = maskImage;
           }
 
-          // 5. Run inference
+          // 6. Run inference
           try {
-            inpaintedPatch = await _runInference(resizedImage, resizedMask);
+            final inpaintedPackagedImage =
+                await _runInference(resizedPackagedImage, resizedPackagedMask);
+
+            // Convert inpainted image to ui.Image for debug output
+            inpaintedPatch = await ImagePackageService.instance
+                .convertImageToUiImage(inpaintedPackagedImage);
             debugImages['inpainted_patch_raw_$polyIndex'] = inpaintedPatch;
 
             // If the patch was resized, resize it back to the original bbox size
@@ -603,7 +489,8 @@ class PolygonInpaintingService {
             ui.Image previousImage = currentImage;
             if (polyIndex > 0) {
               // Don't blend into the original for first polygon
-              currentImage = await _blendPatchIntoImage(
+              currentImage =
+                  await ImageProcessingService.instance.blendPatchIntoImage(
                 currentImage,
                 finalPatch,
                 expandedBox,
@@ -614,6 +501,15 @@ class PolygonInpaintingService {
               if (previousImage != originalImage) {
                 ImageDisposalUtil.disposeImage(previousImage);
               }
+            } else {
+              // For the first polygon, blend directly into the original image
+              currentImage =
+                  await ImageProcessingService.instance.blendPatchIntoImage(
+                originalImage,
+                finalPatch,
+                expandedBox,
+                polygon,
+              );
             }
           } catch (e) {
             if (kDebugMode) {
