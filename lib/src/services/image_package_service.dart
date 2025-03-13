@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:ui' as ui;
-import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import '../models/bounding_box.dart';
@@ -155,12 +154,7 @@ class ImagePackageService {
   /// - [fillColor]: Fill color for polygons (default: white)
   /// - Returns: An img.Image containing the mask
   img.Image generateMask(
-    List<List<Map<String, double>>> polygons,
-    int width,
-    int height, {
-    Color backgroundColor = Colors.black,
-    Color fillColor = Colors.white,
-  }) {
+      List<List<Map<String, double>>> polygons, int width, int height) {
     debugPrint('Generating mask with dimensions: $width x $height');
     debugPrint('Number of polygons: ${polygons.length}');
 
@@ -168,19 +162,8 @@ class ImagePackageService {
     final img.Image mask =
         img.Image(width: width, height: height, numChannels: 4);
 
-    // Convert colors to RGBA format
-    final bgColor = img.ColorRgba8(
-      backgroundColor.red,
-      backgroundColor.green,
-      backgroundColor.blue,
-      backgroundColor.alpha,
-    );
-    final fillColorRgba = img.ColorRgba8(
-      fillColor.red,
-      fillColor.green,
-      fillColor.blue,
-      fillColor.alpha,
-    );
+    final bgColor = img.ColorRgba8(0, 0, 0, 255); // Pure black
+    final fillColorRgba = img.ColorRgba8(255, 255, 255, 255); // Pure white
 
     debugPrint(
         'Background color: R=${bgColor.r}, G=${bgColor.g}, B=${bgColor.b}, A=${bgColor.a}');
@@ -193,6 +176,19 @@ class ImagePackageService {
         mask.setPixel(x, y, bgColor);
       }
     }
+
+    // Count black pixels after background fill
+    int blackPixels = 0;
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final pixel = mask.getPixel(x, y);
+        if (pixel.r == 0 && pixel.g == 0 && pixel.b == 0) {
+          blackPixels++;
+        }
+      }
+    }
+    debugPrint(
+        'Black pixels after background fill: $blackPixels out of ${width * height}');
 
     // Draw each polygon
     for (final polygon in polygons) {
@@ -221,6 +217,19 @@ class ImagePackageService {
       );
     }
 
+    // Count white pixels after polygon fill
+    int whitePixels = 0;
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final pixel = mask.getPixel(x, y);
+        if (pixel.r == 255 && pixel.g == 255 && pixel.b == 255) {
+          whitePixels++;
+        }
+      }
+    }
+    debugPrint(
+        'White pixels after polygon fill: $whitePixels out of ${width * height}');
+
     // Ensure the image data is properly initialized
     if (mask.data == null) {
       throw Exception('Failed to generate mask: image data is null');
@@ -229,7 +238,42 @@ class ImagePackageService {
     debugPrint(
         'Mask generated successfully. Data length: ${mask.data!.length}');
     debugPrint('Image format: ${mask.format}, Channels: ${mask.numChannels}');
+
+    // Verify the mask has proper black and white values
+    _verifyMask(mask);
+
     return mask;
+  }
+
+  /// Verifies that the mask has proper black and white values
+  void _verifyMask(img.Image mask) {
+    int blackPixels = 0;
+    int whitePixels = 0;
+    int otherPixels = 0;
+
+    for (int y = 0; y < mask.height; y++) {
+      for (int x = 0; x < mask.width; x++) {
+        final pixel = mask.getPixel(x, y);
+        if (pixel.r == 0 && pixel.g == 0 && pixel.b == 0) {
+          blackPixels++;
+        } else if (pixel.r == 255 && pixel.g == 255 && pixel.b == 255) {
+          whitePixels++;
+        } else {
+          otherPixels++;
+          debugPrint(
+              'Found non-black/white pixel at ($x, $y): R=${pixel.r}, G=${pixel.g}, B=${pixel.b}, A=${pixel.a}');
+        }
+      }
+    }
+
+    debugPrint('Mask verification:');
+    debugPrint('- Black pixels: $blackPixels');
+    debugPrint('- White pixels: $whitePixels');
+    debugPrint('- Other pixels: $otherPixels');
+
+    if (otherPixels > 0) {
+      debugPrint('WARNING: Mask contains non-black/white pixels!');
+    }
   }
 
   /// Blends an inpainted patch into the original image using a polygon mask

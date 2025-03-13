@@ -145,8 +145,6 @@ class PolygonInpaintingService {
         [polygonRelativeToBox],
         expandedBox.width,
         expandedBox.height,
-        backgroundColor: Colors.black,
-        fillColor: Colors.white,
       );
 
       // 5. Resize if needed
@@ -420,8 +418,6 @@ class PolygonInpaintingService {
             [polygonRelativeToBox],
             expandedBox.width,
             expandedBox.height,
-            backgroundColor: Colors.black,
-            fillColor: Colors.white,
           );
 
           // Convert mask to ui.Image for debug output
