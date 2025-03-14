@@ -34,3 +34,4 @@ build/
 # Assets Used in Example App
 /example/assets/magic_env/
 /example/assets/models/
+/example/android/app/.cxx

@@ -1,8 +1,77 @@
 import 'dart:async';
+import 'dart:developer';
 import 'dart:ui' as ui;
 import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import '../models/bounding_box.dart';
+
+/// Parameters for image conversion from ui.Image to img.Image
+class UiToImgParams {
+  final Uint8List bytes;
+  final int width;
+  final int height;
+
+  UiToImgParams(this.bytes, this.width, this.height);
+}
+
+/// Parameters for image conversion from img.Image to ui.Image
+class ImgToUiParams {
+  final img.Image image;
+
+  ImgToUiParams(this.image);
+}
+
+/// Result class for image conversion
+class ImageConversionResult {
+  final Uint8List bytes;
+  final int width;
+  final int height;
+
+  ImageConversionResult(this.bytes, this.width, this.height);
+}
+
+/// Parameters for image cropping
+class CropParams {
+  final img.Image image;
+  final int x;
+  final int y;
+  final int width;
+  final int height;
+
+  CropParams(this.image, this.x, this.y, this.width, this.height);
+}
+
+/// Parameters for image resizing
+class ResizeParams {
+  final img.Image image;
+  final int targetWidth;
+  final int targetHeight;
+  final bool useBilinear;
+
+  ResizeParams(
+      this.image, this.targetWidth, this.targetHeight, this.useBilinear);
+}
+
+/// Parameters for mask generation
+class MaskParams {
+  final List<List<Map<String, double>>> polygons;
+  final int width;
+  final int height;
+
+  MaskParams(this.polygons, this.width, this.height);
+}
+
+/// Parameters for blending a patch into an image
+class BlendParams {
+  final img.Image originalImage;
+  final img.Image patch;
+  final BoundingBox box;
+  final List<Map<String, double>> polygon;
+  final String debugTag;
+
+  BlendParams(
+      this.originalImage, this.patch, this.box, this.polygon, this.debugTag);
+}
 
 /// Service for image processing using the image package
 ///
@@ -26,10 +95,24 @@ class ImagePackageService {
     if (byteData == null) throw Exception("Failed to get image ByteData");
 
     final rgbaBytes = byteData.buffer.asUint8List();
+
+    // Run the conversion in an isolate
+    return compute(
+      _convertUiToImgIsolate,
+      UiToImgParams(rgbaBytes, uiImage.width, uiImage.height),
+    );
+  }
+
+  /// Isolate function for converting ui.Image bytes to img.Image
+  static img.Image _convertUiToImgIsolate(UiToImgParams params) {
+    if (kDebugMode) {
+      log('Converting ui.Image to img.Image with dimensions: ${params.width}x${params.height}',
+          name: 'ImagePackageService');
+    }
     return img.Image.fromBytes(
-      width: uiImage.width,
-      height: uiImage.height,
-      bytes: rgbaBytes.buffer,
+      width: params.width,
+      height: params.height,
+      bytes: params.bytes.buffer,
       numChannels: 4,
       order: img.ChannelOrder.rgba,
     );
@@ -40,14 +123,40 @@ class ImagePackageService {
   /// - [image]: The img.Image to convert
   /// - Returns: A ui.Image representation of the image
   Future<ui.Image> convertImageToUiImage(img.Image image) async {
-    debugPrint('Converting image to ui.Image');
-    debugPrint(
-        'Original image format: ${image.format}, Channels: ${image.numChannels}');
+    // Process the image in an isolate
+    final processedBytes = await compute(
+      _convertImgToUiIsolate,
+      ImgToUiParams(image),
+    );
+
+    // Create a Completer to wait for the async decoding
+    final Completer<ui.Image> completer = Completer();
+
+    // Decode pixels into a ui.Image (must be done on the main thread)
+    ui.decodeImageFromPixels(
+      processedBytes.bytes,
+      processedBytes.width,
+      processedBytes.height,
+      ui.PixelFormat.rgba8888,
+      (ui.Image result) {
+        completer.complete(result);
+      },
+    );
+
+    return completer.future;
+  }
+
+  /// Isolate function for converting img.Image to bytes for ui.Image
+  static ImageConversionResult _convertImgToUiIsolate(ImgToUiParams params) {
+    if (kDebugMode) {
+      log('Converting img.Image to bytes for ui.Image with dimensions: ${params.image.width}x${params.image.height}',
+          name: 'ImagePackageService');
+    }
+    final img.Image image = params.image;
 
     // Ensure we have an RGBA image
     img.Image rgbaImage;
     if (image.numChannels != 4) {
-      debugPrint('Converting image to RGBA format');
       // Create a new RGBA image
       rgbaImage =
           img.Image(width: image.width, height: image.height, numChannels: 4);
@@ -67,28 +176,11 @@ class ImagePackageService {
       rgbaImage = image;
     }
 
-    debugPrint(
-        'Final image format: ${rgbaImage.format}, Channels: ${rgbaImage.numChannels}');
-
     // Convert img.Image to Uint8List (RGBA format)
     Uint8List uint8List =
         Uint8List.fromList(rgbaImage.getBytes(order: img.ChannelOrder.rgba));
 
-    // Create a Completer to wait for the async decoding
-    final Completer<ui.Image> completer = Completer();
-
-    // Decode pixels into a ui.Image
-    ui.decodeImageFromPixels(
-      uint8List,
-      rgbaImage.width,
-      rgbaImage.height,
-      ui.PixelFormat.rgba8888,
-      (ui.Image result) {
-        completer.complete(result);
-      },
-    );
-
-    return completer.future;
+    return ImageConversionResult(uint8List, rgbaImage.width, rgbaImage.height);
   }
 
   /// Crops an image to the specified dimensions
@@ -99,19 +191,31 @@ class ImagePackageService {
   /// - [width]: The width of the crop region
   /// - [height]: The height of the crop region
   /// - Returns: A new cropped image
-  img.Image cropImage(
+  Future<img.Image> cropImage(
     img.Image image,
     int x,
     int y,
     int width,
     int height,
-  ) {
+  ) async {
+    return compute(
+      _cropImageIsolate,
+      CropParams(image, x, y, width, height),
+    );
+  }
+
+  /// Isolate function for cropping an image
+  static img.Image _cropImageIsolate(CropParams params) {
+    if (kDebugMode) {
+      log('Cropping image with dimensions: ${params.image.width}x${params.image.height} to ${params.width}x${params.height}',
+          name: 'ImagePackageService');
+    }
     return img.copyCrop(
-      image,
-      x: x,
-      y: y,
-      width: width,
-      height: height,
+      params.image,
+      x: params.x,
+      y: params.y,
+      width: params.width,
+      height: params.height,
     );
   }
 
@@ -122,24 +226,36 @@ class ImagePackageService {
   /// - [targetHeight]: The desired height of the output image
   /// - [useBilinear]: Whether to use bilinear interpolation for better quality (default: true)
   /// - Returns: A new resized image
-  img.Image resizeImage(
+  Future<img.Image> resizeImage(
     img.Image image,
     int targetWidth,
     int targetHeight, {
     bool useBilinear = true,
-  }) {
-    if (useBilinear) {
+  }) async {
+    return compute(
+      _resizeImageIsolate,
+      ResizeParams(image, targetWidth, targetHeight, useBilinear),
+    );
+  }
+
+  /// Isolate function for resizing an image
+  static img.Image _resizeImageIsolate(ResizeParams params) {
+    if (kDebugMode) {
+      log('Resizing image with dimensions: ${params.image.width}x${params.image.height} to ${params.targetWidth}x${params.targetHeight}',
+          name: 'ImagePackageService');
+    }
+    if (params.useBilinear) {
       return img.copyResize(
-        image,
-        width: targetWidth,
-        height: targetHeight,
+        params.image,
+        width: params.targetWidth,
+        height: params.targetHeight,
         interpolation: img.Interpolation.linear,
       );
     } else {
       return img.copyResize(
-        image,
-        width: targetWidth,
-        height: targetHeight,
+        params.image,
+        width: params.targetWidth,
+        height: params.targetHeight,
         interpolation: img.Interpolation.nearest,
       );
     }
@@ -150,13 +266,29 @@ class ImagePackageService {
   /// - [polygons]: List of polygons to draw
   /// - [width]: Width of the mask
   /// - [height]: Height of the mask
-  /// - [backgroundColor]: Background color (default: black)
-  /// - [fillColor]: Fill color for polygons (default: white)
   /// - Returns: An img.Image containing the mask
-  img.Image generateMask(
-      List<List<Map<String, double>>> polygons, int width, int height) {
-    debugPrint('Generating mask with dimensions: $width x $height');
-    debugPrint('Number of polygons: ${polygons.length}');
+  Future<img.Image> generateMask(
+      List<List<Map<String, double>>> polygons, int width, int height) async {
+    return compute(
+      _generateMaskIsolate,
+      MaskParams(polygons, width, height),
+    );
+  }
+
+  /// Isolate function for generating a mask
+  static img.Image _generateMaskIsolate(MaskParams params) {
+    if (kDebugMode) {
+      log('Generating mask with dimensions: ${params.width}x${params.height}',
+          name: 'ImagePackageService');
+    }
+    final width = params.width;
+    final height = params.height;
+    final polygons = params.polygons;
+
+    if (kDebugMode) {
+      log('Generating mask with dimensions: $width x $height',
+          name: 'ImagePackageService');
+    }
 
     // Create a new RGBA image with 4 channels
     final img.Image mask =
@@ -165,11 +297,6 @@ class ImagePackageService {
     final bgColor = img.ColorRgba8(0, 0, 0, 255); // Pure black
     final fillColorRgba = img.ColorRgba8(255, 255, 255, 255); // Pure white
 
-    debugPrint(
-        'Background color: R=${bgColor.r}, G=${bgColor.g}, B=${bgColor.b}, A=${bgColor.a}');
-    debugPrint(
-        'Fill color: R=${fillColorRgba.r}, G=${fillColorRgba.g}, B=${fillColorRgba.b}, A=${fillColorRgba.a}');
-
     // Fill with background color
     for (int y = 0; y < height; y++) {
       for (int x = 0; x < width; x++) {
@@ -177,23 +304,9 @@ class ImagePackageService {
       }
     }
 
-    // Count black pixels after background fill
-    int blackPixels = 0;
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        final pixel = mask.getPixel(x, y);
-        if (pixel.r == 0 && pixel.g == 0 && pixel.b == 0) {
-          blackPixels++;
-        }
-      }
-    }
-    debugPrint(
-        'Black pixels after background fill: $blackPixels out of ${width * height}');
-
     // Draw each polygon
     for (final polygon in polygons) {
       if (polygon.length < 3) {
-        debugPrint('Skipping polygon with less than 3 points');
         continue;
       }
 
@@ -205,10 +318,6 @@ class ImagePackageService {
         );
       }).toList();
 
-      debugPrint('Drawing polygon with ${points.length} points');
-      debugPrint('First point: (${points.first.x}, ${points.first.y})');
-      debugPrint('Last point: (${points.last.x}, ${points.last.y})');
-
       // Fill the polygon with the fill color
       img.fillPolygon(
         mask,
@@ -217,36 +326,21 @@ class ImagePackageService {
       );
     }
 
-    // Count white pixels after polygon fill
-    int whitePixels = 0;
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        final pixel = mask.getPixel(x, y);
-        if (pixel.r == 255 && pixel.g == 255 && pixel.b == 255) {
-          whitePixels++;
-        }
-      }
-    }
-    debugPrint(
-        'White pixels after polygon fill: $whitePixels out of ${width * height}');
-
     // Ensure the image data is properly initialized
     if (mask.data == null) {
       throw Exception('Failed to generate mask: image data is null');
     }
 
-    debugPrint(
-        'Mask generated successfully. Data length: ${mask.data!.length}');
-    debugPrint('Image format: ${mask.format}, Channels: ${mask.numChannels}');
-
-    // Verify the mask has proper black and white values
-    _verifyMask(mask);
+    // Verify the mask in debug mode
+    if (kDebugMode) {
+      _verifyMask(mask);
+    }
 
     return mask;
   }
 
   /// Verifies that the mask has proper black and white values
-  void _verifyMask(img.Image mask) {
+  static void _verifyMask(img.Image mask) {
     int blackPixels = 0;
     int whitePixels = 0;
     int otherPixels = 0;
@@ -260,19 +354,19 @@ class ImagePackageService {
           whitePixels++;
         } else {
           otherPixels++;
-          debugPrint(
-              'Found non-black/white pixel at ($x, $y): R=${pixel.r}, G=${pixel.g}, B=${pixel.b}, A=${pixel.a}');
+          if (kDebugMode) {
+            log('Found non-black/white pixel at ($x, $y): R=${pixel.r}, G=${pixel.g}, B=${pixel.b}, A=${pixel.a}',
+                name: 'ImagePackageService');
+          }
         }
       }
     }
 
-    debugPrint('Mask verification:');
-    debugPrint('- Black pixels: $blackPixels');
-    debugPrint('- White pixels: $whitePixels');
-    debugPrint('- Other pixels: $otherPixels');
-
-    if (otherPixels > 0) {
-      debugPrint('WARNING: Mask contains non-black/white pixels!');
+    if (kDebugMode) {
+      if (otherPixels > 0) {
+        log('WARNING Mask verification: Mask contains non-black/white pixels!',
+            name: 'ImagePackageService');
+      }
     }
   }
 
@@ -286,19 +380,38 @@ class ImagePackageService {
   /// - [box]: The bounding box where the patch should be placed
   /// - [polygon]: The polygon defining the area to be inpainted
   /// - Returns: An img.Image with the patch blended into the original image
-  img.Image blendImgPatchIntoImage(
+  Future<img.Image> blendImgPatchIntoImage(
     img.Image originalImage,
     img.Image patch,
     BoundingBox box,
     List<Map<String, double>> polygon, [
     String debugTag = '',
-  ]) {
+  ]) async {
+    return compute(
+      _blendImgPatchIntoImageIsolate,
+      BlendParams(originalImage, patch, box, polygon, debugTag),
+    );
+  }
+
+  /// Isolate function for blending a patch into an image
+  static img.Image _blendImgPatchIntoImageIsolate(BlendParams params) {
     try {
-      debugPrint(
-          'Blending patch into image with dimensions: ${originalImage.width}x${originalImage.height}');
-      debugPrint('Patch dimensions: ${patch.width}x${patch.height}');
-      debugPrint(
-          'Bounding box: x=${box.x}, y=${box.y}, width=${box.width}, height=${box.height}');
+      if (kDebugMode) {
+        log('Blending patch into image with dimensions: ${params.originalImage.width}x${params.originalImage.height}',
+            name: 'ImagePackageService');
+        if (kDebugMode) {
+          log('Blending patch into image with dimensions: ${params.originalImage.width}x${params.originalImage.height}',
+              name: 'ImagePackageService');
+          log('Patch dimensions: ${params.patch.width}x${params.patch.height}',
+              name: 'ImagePackageService');
+          log('Bounding box: x=${params.box.x}, y=${params.box.y}, width=${params.box.width}, height=${params.box.height}',
+              name: 'ImagePackageService');
+        }
+      }
+      final originalImage = params.originalImage;
+      final patch = params.patch;
+      final box = params.box;
+      final polygon = params.polygon;
 
       // Create a copy of the original image to avoid modifying it
       final result = img.Image.from(originalImage);
@@ -325,24 +438,14 @@ class ImagePackageService {
         }
       }
 
-      if (kDebugMode) {
-        debugPrint('Successfully blended patch into original image');
-      }
-
       return result;
     } catch (e) {
-      if (kDebugMode) {
-        final logTag = debugTag.isNotEmpty
-            ? '$debugTag - blendImgPatchIntoImage'
-            : 'blendImgPatchIntoImage';
-        debugPrint('Error in $logTag: $e');
-      }
-      rethrow;
+      throw Exception('Error in blendImgPatchIntoImage: $e');
     }
   }
 
   /// Checks if a point is inside a polygon using the ray casting algorithm
-  bool _isPointInPolygon(
+  static bool _isPointInPolygon(
       double x, double y, List<Map<String, double>> polygon) {
     bool inside = false;
     final int len = polygon.length;
