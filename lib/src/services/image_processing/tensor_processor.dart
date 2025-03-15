@@ -10,7 +10,8 @@ import 'models.dart' as tensor_models;
 /// Handles tensor-related image processing operations
 class TensorProcessor {
   /// Converts an image into a floating-point tensor
-  static Future<List<double>> imageToFloatTensor(ui.Image image) async {
+  static Future<List<double>> convertUIImageToFloatTensor(
+      ui.Image image) async {
     final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (byteData == null) throw Exception("Failed to get image ByteData");
 
@@ -19,13 +20,14 @@ class TensorProcessor {
 
     // Process in isolate for better performance
     return compute(
-      _imageToFloatTensorIsolate,
+      _uiImageToFloatTensorIsolate,
       tensor_models.TensorParams(rgbaBytes: rgbaBytes, pixelCount: pixelCount),
     );
   }
 
   /// Converts a mask image into a floating-point tensor
-  static Future<List<double>> maskToFloatTensor(ui.Image maskImage) async {
+  static Future<List<double>> convertUIMaskToFloatTensor(
+      ui.Image maskImage) async {
     final byteData =
         await maskImage.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (byteData == null) throw Exception("Failed to get mask ByteData");
@@ -35,7 +37,7 @@ class TensorProcessor {
 
     // Process in isolate for better performance
     final result = await compute(
-      _maskToFloatTensorIsolate,
+      _uiMaskToFloatTensorIsolate,
       tensor_models.MaskParams(
         rgbaBytes: rgbaBytes,
         pixelCount: pixelCount,
@@ -134,7 +136,7 @@ class TensorProcessor {
 
     // Process in isolate for better performance
     return compute(
-      _imageToFloatTensorIsolate,
+      _uiImageToFloatTensorIsolate,
       tensor_models.TensorParams(
         rgbaBytes: rgbaBytes,
         pixelCount: pixelCount,
@@ -203,7 +205,7 @@ class TensorProcessor {
 
     // Process in isolate for better performance
     final result = await compute(
-      _maskToFloatTensorIsolate,
+      _uiMaskToFloatTensorIsolate,
       tensor_models.MaskParams(
         rgbaBytes: rgbaBytes,
         pixelCount: pixelCount,
@@ -221,7 +223,7 @@ class TensorProcessor {
 }
 
 /// Converts an image to a float tensor in an isolate
-List<double> _imageToFloatTensorIsolate(tensor_models.TensorParams params) {
+List<double> _uiImageToFloatTensorIsolate(tensor_models.TensorParams params) {
   final floats = List<double>.filled(params.pixelCount * 3, 0);
   final pixelCount = params.pixelCount;
 
@@ -236,7 +238,7 @@ List<double> _imageToFloatTensorIsolate(tensor_models.TensorParams params) {
 }
 
 /// Isolate function to convert RGBA bytes to a float tensor for mask
-tensor_models.MaskResult _maskToFloatTensorIsolate(
+tensor_models.MaskResult _uiMaskToFloatTensorIsolate(
     tensor_models.MaskParams params) {
   if (params.debugMode) {
     log('Starting mask tensor conversion in isolate', name: 'TensorProcessor');

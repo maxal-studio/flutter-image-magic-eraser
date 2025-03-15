@@ -21,18 +21,18 @@ class ImageProcessingService {
   static ImageProcessingService get instance => _instance;
 
   /// Resizes the input image to the specified dimensions
-  Future<ui.Image> resizeImage(
+  Future<ui.Image> resizeUIImage(
       ui.Image image, int targetWidth, int targetHeight) async {
-    return ResizeProcessor.resizeImage(image, targetWidth, targetHeight);
+    return ResizeProcessor.resizeUIImage(image, targetWidth, targetHeight);
   }
 
   /// Converts an image to grayscale
-  Future<ui.Image> convertToGrayscale(
+  Future<ui.Image> convertUIImageToGrayscale(
     ui.Image image, {
     bool blackNWhite = true,
     int threshold = 50,
   }) async {
-    return GrayscaleProcessor.convertToGrayscale(
+    return GrayscaleProcessor.convertUIImageToGrayscale(
       image,
       blackNWhite: blackNWhite,
       threshold: threshold,
@@ -40,13 +40,13 @@ class ImageProcessingService {
   }
 
   /// Converts an image into a floating-point tensor
-  Future<List<double>> imageToFloatTensor(ui.Image image) async {
-    return TensorProcessor.imageToFloatTensor(image);
+  Future<List<double>> convertUIImageToFloatTensor(ui.Image image) async {
+    return TensorProcessor.convertUIImageToFloatTensor(image);
   }
 
   /// Converts a mask image into a floating-point tensor
-  Future<List<double>> maskToFloatTensor(ui.Image maskImage) async {
-    return TensorProcessor.maskToFloatTensor(maskImage);
+  Future<List<double>> convertUIMaskToFloatTensor(ui.Image maskImage) async {
+    return TensorProcessor.convertUIMaskToFloatTensor(maskImage);
   }
 
   /// Converts an RGB tensor output to a UI image
@@ -75,7 +75,7 @@ class ImageProcessingService {
   ///
   /// This method draws the inpainted patch only within the polygon area,
   /// ensuring that only the masked region is affected by the inpainting.
-  Future<ui.Image> blendPatchIntoImage(
+  Future<ui.Image> blendUIPatchIntoUIImage(
     ui.Image originalImage,
     ui.Image patch,
     BoundingBox box,

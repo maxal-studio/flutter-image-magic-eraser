@@ -456,7 +456,7 @@ class PolygonInpaintingService {
             if (polyIndex > 0) {
               // Don't blend into the original for first polygon
               currentImage =
-                  await ImageProcessingService.instance.blendPatchIntoImage(
+                  await ImageProcessingService.instance.blendUIPatchIntoUIImage(
                 currentImage,
                 finalPatch,
                 expandedBox,
@@ -470,7 +470,7 @@ class PolygonInpaintingService {
             } else {
               // For the first polygon, blend directly into the original image
               currentImage =
-                  await ImageProcessingService.instance.blendPatchIntoImage(
+                  await ImageProcessingService.instance.blendUIPatchIntoUIImage(
                 originalImage,
                 finalPatch,
                 expandedBox,

@@ -9,7 +9,7 @@ import 'models.dart';
 /// Handles image resizing operations
 class ResizeProcessor {
   /// Resizes the input image to the specified dimensions
-  static Future<ui.Image> resizeImage(
+  static Future<ui.Image> resizeUIImage(
       ui.Image image, int targetWidth, int targetHeight) async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
