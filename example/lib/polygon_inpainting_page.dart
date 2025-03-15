@@ -30,7 +30,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
 
   // Inpainting state
   bool _isInpainting = false;
-  bool _useGpu = false;
+  bool _useGpu = true;
   double? _lastExecutionTimeMs;
   StreamSubscription<ModelLoadingState>? _modelLoadingSubscription;
 
