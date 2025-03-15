@@ -4,10 +4,10 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_magic_eraser/src/services/image_processing_service.dart';
 
 import 'models/inpainting_config.dart';
 import 'models/model_init_data.dart';
-import 'services/mask_generation_service.dart';
 import 'services/onnx_model_service.dart';
 import 'services/polygon_inpainting_service.dart';
 import 'services/polygon_processing_service.dart';
@@ -192,7 +192,7 @@ class InpaintingService {
         PolygonProcessingService.instance.processPolygons(polygons);
     final decodedImage = await decodeImageFromList(image);
 
-    final result = await MaskGenerationService.instance.generateDebugMask(
+    final result = await ImageProcessingService.instance.generateDebugMask(
       processedPolygons,
       decodedImage.width,
       decodedImage.height,

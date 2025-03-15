@@ -4,7 +4,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:image_magic_eraser/src/services/image_package_service.dart';
 import 'package:image_magic_eraser/src/services/image_processing/tensor_processor.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
@@ -62,7 +61,7 @@ class PolygonInpaintingService {
       }
 
       // Return the final result (this will be disposed by the caller)
-      return await ImagePackageService.instance
+      return await ImageProcessingService.instance
           .convertImageToUiImage(originalImage);
     } catch (e) {
       if (kDebugMode) {
@@ -125,7 +124,7 @@ class PolygonInpaintingService {
           expandedBox.y != 0 ||
           expandedBox.width != image.width ||
           expandedBox.height != image.height) {
-        packagedImageCropped = await ImagePackageService.instance.cropImage(
+        packagedImageCropped = await ImageProcessingService.instance.cropImage(
           packagedImage,
           expandedBox.x,
           expandedBox.y,
@@ -140,7 +139,7 @@ class PolygonInpaintingService {
       final polygonRelativeToBox = _adjustPolygonToBox(polygon, expandedBox);
 
       // 4. Generate mask
-      packagedMask = await ImagePackageService.instance.generateMask(
+      packagedMask = await ImageProcessingService.instance.generateMaskImage(
         [polygonRelativeToBox],
         expandedBox.width,
         expandedBox.height,
@@ -152,14 +151,15 @@ class PolygonInpaintingService {
 
       if (expandedBox.width != config.inputSize ||
           expandedBox.height != config.inputSize) {
-        resizedPackagedImage = await ImagePackageService.instance.resizeImage(
+        resizedPackagedImage =
+            await ImageProcessingService.instance.resizeImage(
           packagedImageCropped,
           config.inputSize,
           config.inputSize,
           useBilinear: true,
         );
 
-        resizedPackagedMask = await ImagePackageService.instance.resizeImage(
+        resizedPackagedMask = await ImageProcessingService.instance.resizeImage(
           packagedMask,
           config.inputSize,
           config.inputSize,
@@ -180,7 +180,7 @@ class PolygonInpaintingService {
       if (expandedBox.width != config.inputSize ||
           expandedBox.height != config.inputSize) {
         inpaintedPatchFinalImage =
-            await ImagePackageService.instance.resizeImage(
+            await ImageProcessingService.instance.resizeImage(
           inpaintedPackagedImage,
           expandedBox.width,
           expandedBox.height,
@@ -191,7 +191,7 @@ class PolygonInpaintingService {
       }
 
       // 8. Apply inpainted patch
-      return await ImagePackageService.instance.blendImgPatchIntoImage(
+      return await ImageProcessingService.instance.blendImgPatchIntoImage(
         packagedImage,
         inpaintedPatchFinalImage,
         expandedBox,
@@ -337,8 +337,8 @@ class PolygonInpaintingService {
           }
 
           // Convert current image to img.Image for processing
-          final img.Image packagedImage = await ImagePackageService.instance
-              .convertUiImageToImgImage(currentImage);
+          final img.Image packagedImage = await ImageProcessingService.instance
+              .convertUiImageToImage(currentImage);
 
           // 3. Crop the current image using the adjusted bbox
           img.Image croppedPackagedImage;
@@ -346,7 +346,8 @@ class PolygonInpaintingService {
               expandedBox.y != 0 ||
               expandedBox.width != currentImage.width ||
               expandedBox.height != currentImage.height) {
-            croppedPackagedImage = await ImagePackageService.instance.cropImage(
+            croppedPackagedImage =
+                await ImageProcessingService.instance.cropImage(
               packagedImage,
               expandedBox.x,
               expandedBox.y,
@@ -358,7 +359,7 @@ class PolygonInpaintingService {
           }
 
           // Convert back to ui.Image for debug output
-          croppedImage = await ImagePackageService.instance
+          croppedImage = await ImageProcessingService.instance
               .convertImageToUiImage(croppedPackagedImage);
           debugImages['cropped_$polyIndex'] = croppedImage;
 
@@ -368,14 +369,14 @@ class PolygonInpaintingService {
 
           // 4. Generate mask using ImagePackageService
           img.Image packagedMask =
-              await ImagePackageService.instance.generateMask(
+              await ImageProcessingService.instance.generateMaskImage(
             [polygonRelativeToBox],
             expandedBox.width,
             expandedBox.height,
           );
 
           // Convert mask to ui.Image for debug output
-          maskImage = await ImagePackageService.instance
+          maskImage = await ImageProcessingService.instance
               .convertImageToUiImage(packagedMask);
           debugImages['mask_$polyIndex'] = maskImage;
 
@@ -386,7 +387,7 @@ class PolygonInpaintingService {
           if (expandedBox.width != cfg.inputSize ||
               expandedBox.height != cfg.inputSize) {
             resizedPackagedImage =
-                await ImagePackageService.instance.resizeImage(
+                await ImageProcessingService.instance.resizeImage(
               croppedPackagedImage,
               cfg.inputSize,
               cfg.inputSize,
@@ -394,7 +395,7 @@ class PolygonInpaintingService {
             );
 
             resizedPackagedMask =
-                await ImagePackageService.instance.resizeImage(
+                await ImageProcessingService.instance.resizeImage(
               packagedMask,
               cfg.inputSize,
               cfg.inputSize,
@@ -402,11 +403,11 @@ class PolygonInpaintingService {
             );
 
             // Convert resized images to ui.Image for debug output
-            resizedImage = await ImagePackageService.instance
+            resizedImage = await ImageProcessingService.instance
                 .convertImageToUiImage(resizedPackagedImage);
             debugImages['resized_image_$polyIndex'] = resizedImage;
 
-            resizedMask = await ImagePackageService.instance
+            resizedMask = await ImageProcessingService.instance
                 .convertImageToUiImage(resizedPackagedMask);
             debugImages['resized_mask_$polyIndex'] = resizedMask;
           } else {
@@ -422,7 +423,7 @@ class PolygonInpaintingService {
                 await _runInference(resizedPackagedImage, resizedPackagedMask);
 
             // Convert inpainted image to ui.Image for debug output
-            inpaintedPatch = await ImagePackageService.instance
+            inpaintedPatch = await ImageProcessingService.instance
                 .convertImageToUiImage(inpaintedPackagedImage);
             debugImages['inpainted_patch_raw_$polyIndex'] = inpaintedPatch;
 
@@ -430,12 +431,12 @@ class PolygonInpaintingService {
             if (expandedBox.width != cfg.inputSize ||
                 expandedBox.height != cfg.inputSize) {
               // Convert back to img.Image for resizing
-              final inpaintedImgImage = await ImagePackageService.instance
-                  .convertUiImageToImgImage(inpaintedPatch);
+              final inpaintedImgImage = await ImageProcessingService.instance
+                  .convertUiImageToImage(inpaintedPatch);
 
               // Resize using ImagePackageService
               final resizedInpaintedImage =
-                  await ImagePackageService.instance.resizeImage(
+                  await ImageProcessingService.instance.resizeImage(
                 inpaintedImgImage,
                 expandedBox.width,
                 expandedBox.height,
@@ -443,7 +444,7 @@ class PolygonInpaintingService {
               );
 
               // Convert back to ui.Image
-              finalPatch = await ImagePackageService.instance
+              finalPatch = await ImageProcessingService.instance
                   .convertImageToUiImage(resizedInpaintedImage);
             } else {
               finalPatch = inpaintedPatch;
