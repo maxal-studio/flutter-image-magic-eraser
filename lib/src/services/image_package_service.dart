@@ -331,43 +331,7 @@ class ImagePackageService {
       throw Exception('Failed to generate mask: image data is null');
     }
 
-    // Verify the mask in debug mode
-    if (kDebugMode) {
-      _verifyMask(mask);
-    }
-
     return mask;
-  }
-
-  /// Verifies that the mask has proper black and white values
-  static void _verifyMask(img.Image mask) {
-    int blackPixels = 0;
-    int whitePixels = 0;
-    int otherPixels = 0;
-
-    for (int y = 0; y < mask.height; y++) {
-      for (int x = 0; x < mask.width; x++) {
-        final pixel = mask.getPixel(x, y);
-        if (pixel.r == 0 && pixel.g == 0 && pixel.b == 0) {
-          blackPixels++;
-        } else if (pixel.r == 255 && pixel.g == 255 && pixel.b == 255) {
-          whitePixels++;
-        } else {
-          otherPixels++;
-          if (kDebugMode) {
-            log('Found non-black/white pixel at ($x, $y): R=${pixel.r}, G=${pixel.g}, B=${pixel.b}, A=${pixel.a}',
-                name: 'ImagePackageService');
-          }
-        }
-      }
-    }
-
-    if (kDebugMode) {
-      if (otherPixels > 0) {
-        log('WARNING Mask verification: Mask contains non-black/white pixels!',
-            name: 'ImagePackageService');
-      }
-    }
   }
 
   /// Blends an inpainted patch into the original image using a polygon mask
