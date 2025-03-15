@@ -52,17 +52,41 @@ class PolygonInpaintingService {
     }
 
     try {
-      // Decode the input image
-      img.Image originalImage = img.decodeImage(imageBytes)!;
+      if (cfg.useGpu) {
+        log('Using GPU for inpainting', name: 'PolygonInpaintingService');
+        // Decode the input image
+        final originalImage = await decodeImageFromList(imageBytes);
 
-      for (final polygon in polygons) {
-        // Inpaint the polygon
-        originalImage = await _inpaintPolygon(originalImage, polygon, cfg);
+        // Process each polygon
+        ui.Image resultImage = originalImage;
+        for (final polygon in polygons) {
+          ui.Image previousImage = resultImage;
+          // Inpaint the polygon
+          resultImage = await _inpaintPolygonWithGPU(resultImage, polygon, cfg);
+
+          // Dispose previous iteration image if not the original
+          if (previousImage != originalImage) {
+            ImageDisposalUtil.disposeImage(previousImage);
+          }
+        }
+
+        // Return the final result (this will be disposed by the caller)
+        return resultImage;
+      } else {
+        log('Using CPU for inpainting', name: 'PolygonInpaintingService');
+        // Decode the input image
+        img.Image originalImage = img.decodeImage(imageBytes)!;
+
+        for (final polygon in polygons) {
+          // Inpaint the polygon
+          originalImage =
+              await _inpaintPolygonWithCPU(originalImage, polygon, cfg);
+        }
+
+        // Return the final result (this will be disposed by the caller)
+        return await ImageProcessingService.instance
+            .convertImageToUiImage(originalImage);
       }
-
-      // Return the final result (this will be disposed by the caller)
-      return await ImageProcessingService.instance
-          .convertImageToUiImage(originalImage);
     } catch (e) {
       if (kDebugMode) {
         log('Error in inpaintPolygons: $e',
@@ -84,7 +108,7 @@ class PolygonInpaintingService {
   /// 7. Applying the inpainted patch precisely within the polygon boundaries
   ///
   /// The result is an image where only the area inside the polygon has been inpainted.
-  Future<img.Image> _inpaintPolygon(
+  Future<img.Image> _inpaintPolygonWithCPU(
     img.Image image,
     List<Map<String, double>> polygon,
     InpaintingConfig config,
@@ -171,7 +195,7 @@ class PolygonInpaintingService {
       }
 
       // 6. Run inference
-      inpaintedPackagedImage = await _runInference(
+      inpaintedPackagedImage = await _runInferenceWithCPU(
         resizedPackagedImage,
         resizedPackagedMask,
       );
@@ -207,6 +231,144 @@ class PolygonInpaintingService {
     }
   }
 
+  /// Inpaints a single polygon in the image
+  ///
+  /// This method processes a single polygon by:
+  /// 1. Computing a bounding box around the polygon
+  /// 2. Expanding the bounding box to provide context for the inpainting model
+  /// 3. Cropping the image to the expanded bounding box
+  /// 4. Creating a mask from the polygon
+  /// 5. Resizing the cropped image and mask if needed
+  /// 6. Running the inpainting model
+  /// 7. Applying the inpainted patch precisely within the polygon boundaries
+  ///
+  /// The result is an image where only the area inside the polygon has been inpainted.
+  Future<ui.Image> _inpaintPolygonWithGPU(
+    ui.Image image,
+    List<Map<String, double>> polygon,
+    InpaintingConfig config,
+  ) async {
+    ui.Image? croppedImage;
+    ui.Image? maskImage;
+    ui.Image? resizedImage;
+    ui.Image? resizedMask;
+    ui.Image? inpaintedPatch;
+    ui.Image? finalPatch;
+    ui.Image? result;
+
+    try {
+      // 1. Compute bounding box around the polygon
+      final bbox = BoundingBox.fromPoints(polygon);
+
+      // 2. Determine expansion size based on mask dimensions
+      BoundingBox expandedBox;
+
+      // If bbox is small enough, expand to input_size
+      if (bbox.width <= config.inputSize && bbox.height <= config.inputSize) {
+        expandedBox = bbox.ensureSize(
+          targetSize: config.inputSize,
+          imageWidth: image.width,
+          imageHeight: image.height,
+        );
+      } else {
+        // Otherwise, expand by the specified percentage
+        expandedBox = bbox.expand(
+          percentage: config.expandPercentage,
+          maxExpansion: config.maxExpansionSize,
+          imageWidth: image.width,
+          imageHeight: image.height,
+        );
+      }
+
+      // 3. Crop the original image using the adjusted bbox
+      croppedImage = await ImageProcessingService.instance.cropUIImage(
+        image,
+        expandedBox,
+      );
+
+      // Generate mask for the polygon
+      final polygonRelativeToBox = _adjustPolygonToBox(polygon, expandedBox);
+
+      maskImage = await ImageProcessingService.instance.generateUIImageMask(
+        [polygonRelativeToBox],
+        expandedBox.width,
+        expandedBox.height,
+        backgroundColor: Colors.black,
+        fillColor: Colors.white,
+      );
+
+      // 4. Resize to input_size if needed
+      if (expandedBox.width != config.inputSize ||
+          expandedBox.height != config.inputSize) {
+        // Use a safer resizing method
+        resizedImage = await ImageProcessingService.instance.resizeUIImage(
+          croppedImage,
+          config.inputSize,
+          config.inputSize,
+        );
+
+        resizedMask = await ImageProcessingService.instance.resizeUIImage(
+          maskImage,
+          config.inputSize,
+          config.inputSize,
+        );
+      } else {
+        resizedImage = croppedImage;
+        resizedMask = maskImage;
+      }
+
+      // 5. Send to ONNX model for inpainting
+      inpaintedPatch = await _runInferenceWithGPU(resizedImage, resizedMask);
+
+      // If the patch was resized, resize it back to the original bbox size
+      if (expandedBox.width != config.inputSize ||
+          expandedBox.height != config.inputSize) {
+        finalPatch = await ImageProcessingService.instance.resizeUIImage(
+          inpaintedPatch,
+          expandedBox.width,
+          expandedBox.height,
+        );
+        // Dispose inpaintedPatch as we no longer need it
+        ImageDisposalUtil.disposeImage(inpaintedPatch);
+        inpaintedPatch = null;
+      } else {
+        finalPatch = inpaintedPatch;
+        inpaintedPatch = null; // Avoid double disposal
+      }
+
+      // 6. Apply inpainted patch only within the polygon area
+      result = await ImageProcessingService.instance.blendUIPatchIntoUIImage(
+        image,
+        finalPatch,
+        expandedBox,
+        polygon,
+      );
+
+      return result;
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error in _inpaintPolygon: $e',
+            name: 'PolygonInpaintingService', error: e);
+      }
+      rethrow;
+    } finally {
+      // Dispose all temporary images
+      List<ui.Image?> imagesToDispose = [
+        croppedImage,
+        maskImage,
+        // Only dispose resizedImage if it's different from croppedImage
+        resizedImage != croppedImage ? resizedImage : null,
+        // Only dispose resizedMask if it's different from maskImage
+        resizedMask != maskImage ? resizedMask : null,
+        inpaintedPatch,
+        // Only dispose finalPatch if it's different from inpaintedPatch
+        finalPatch != inpaintedPatch ? finalPatch : null,
+      ];
+
+      ImageDisposalUtil.disposeImages(imagesToDispose);
+    }
+  }
+
   /// Adjusts polygon points to be relative to the bounding box
   List<Map<String, double>> _adjustPolygonToBox(
     List<Map<String, double>> polygon,
@@ -221,7 +383,68 @@ class PolygonInpaintingService {
   }
 
   /// Runs inference on the ONNX model
-  Future<img.Image> _runInference(
+  Future<ui.Image> _runInferenceWithGPU(
+    ui.Image image,
+    ui.Image mask,
+  ) async {
+    try {
+      // Check if the model is loaded
+      if (!OnnxModelService.instance.isModelLoaded()) {
+        throw Exception(
+            'ONNX model not initialized. Call initializeOrt first.');
+      }
+
+      // Convert mask to grayscale
+      final grayscaleMask = mask;
+
+      // Convert to tensors
+      final rgbFloats = await ImageProcessingService.instance
+          .convertUIImageToFloatTensor(image);
+      final maskFloats = await ImageProcessingService.instance
+          .convertUIMaskToFloatTensor(grayscaleMask);
+
+      // Create tensors for ONNX model
+      final imageTensor = OrtValueTensor.createTensorWithDataList(
+        Float32List.fromList(rgbFloats),
+        [1, 3, image.width, image.height],
+      );
+
+      final maskTensor = OrtValueTensor.createTensorWithDataList(
+        Float32List.fromList(maskFloats),
+        [1, 1, mask.width, mask.height],
+      );
+
+      // Run inference
+      final inputs = {
+        'image': imageTensor,
+        'mask': maskTensor,
+      };
+
+      final outputs = await OnnxModelService.instance.runInference(inputs);
+
+      // Release tensors
+      imageTensor.release();
+      maskTensor.release();
+
+      // Process output
+      final outputTensor = outputs?[0]?.value;
+      if (outputTensor is List) {
+        final output = outputTensor[0];
+        return await ImageProcessingService.instance.rgbTensorToUIImage(output);
+      } else {
+        throw Exception('Unexpected output format from ONNX model.');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error in _runInference: $e',
+            name: 'PolygonInpaintingService', error: e);
+      }
+      rethrow;
+    }
+  }
+
+  /// Runs inference on the ONNX model
+  Future<img.Image> _runInferenceWithCPU(
     img.Image image,
     img.Image mask,
   ) async {
@@ -233,8 +456,10 @@ class PolygonInpaintingService {
       }
 
       // Convert to tensors
-      final rgbFloats = await TensorProcessor.imgImageToFloatTensor(image);
-      final maskFloats = await TensorProcessor.imgMaskToFloatTensor(mask);
+      final rgbFloats =
+          await ImageProcessingService.instance.imageToFloatTensor(image);
+      final maskFloats =
+          await ImageProcessingService.instance.imageMaskToFloatTensor(mask);
 
       // Create tensors for ONNX model
       final imageTensor = OrtValueTensor.createTensorWithDataList(
@@ -419,8 +644,8 @@ class PolygonInpaintingService {
 
           // 6. Run inference
           try {
-            final inpaintedPackagedImage =
-                await _runInference(resizedPackagedImage, resizedPackagedMask);
+            final inpaintedPackagedImage = await _runInferenceWithCPU(
+                resizedPackagedImage, resizedPackagedMask);
 
             // Convert inpainted image to ui.Image for debug output
             inpaintedPatch = await ImageProcessingService.instance

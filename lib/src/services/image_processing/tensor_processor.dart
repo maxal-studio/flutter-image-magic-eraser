@@ -92,7 +92,7 @@ class TensorProcessor {
   ///
   /// - [image]: The img.Image to convert
   /// - Returns: A list of floating-point values representing the RGB channels
-  static Future<List<double>> imgImageToFloatTensor(img.Image image) async {
+  static Future<List<double>> imageToFloatTensor(img.Image image) async {
     if (kDebugMode) {
       log('Converting image to tensor with dimensions: ${image.width}x${image.height}',
           name: 'TensorProcessor');
@@ -188,7 +188,7 @@ class TensorProcessor {
   ///
   /// - [mask]: The img.Image mask to convert
   /// - Returns: A list of floating-point values (0.0 or 1.0) representing the binary mask
-  static Future<List<double>> imgMaskToFloatTensor(img.Image mask) async {
+  static Future<List<double>> imageMaskToFloatTensor(img.Image mask) async {
     if (kDebugMode) {
       log('Converting mask to tensor with dimensions: ${mask.width}x${mask.height}',
           name: 'TensorProcessor');

@@ -50,25 +50,42 @@ class ResizeProcessor {
     }
   }
 
-  /// Resizes the input image to the specified dimensions
+  /// Efficiently resizes an image to the specified dimensions
   static Future<ui.Image> resizeUIImage(
-      ui.Image image, int targetWidth, int targetHeight) async {
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
+    ui.Image image,
+    int targetWidth,
+    int targetHeight,
+  ) async {
+    try {
+      // Create a picture recorder
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
 
-    // Use a more efficient paint configuration
-    final paint = Paint()
-      ..filterQuality = FilterQuality.medium
-      ..isAntiAlias = false;
+      // Use a high-quality paint object for better results
+      final paint = Paint()
+        ..filterQuality = FilterQuality.high
+        ..isAntiAlias = true;
 
-    final srcRect =
-        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
-    final dstRect =
-        Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble());
-    canvas.drawImageRect(image, srcRect, dstRect, paint);
+      // Draw the image scaled to the target size
+      canvas.drawImageRect(
+        image,
+        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+        Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble()),
+        paint,
+      );
 
-    final picture = recorder.endRecording();
-    return picture.toImage(targetWidth, targetHeight);
+      // Convert to an image
+      final picture = recorder.endRecording();
+      final resizedImage = await picture.toImage(targetWidth, targetHeight);
+
+      return resizedImage;
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error in _safeResizeImage: $e',
+            name: 'PolygonInpaintingService', error: e);
+      }
+      rethrow;
+    }
   }
 
   /// Resizes the RGB output to match the original image dimensions

@@ -1,3 +1,10 @@
+## 1.0.4
+
+### Improver:
+
+  - Added option to do Image processing using CPU and GPU
+  - Refactored ImageProcessingService
+
 ## 1.0.3
 
 ### Improved:

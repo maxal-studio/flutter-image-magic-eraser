@@ -30,6 +30,8 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
 
   // Inpainting state
   bool _isInpainting = false;
+  bool _useGpu = false;
+  double? _lastExecutionTimeMs;
   StreamSubscription<ModelLoadingState>? _modelLoadingSubscription;
 
   // Polygon drawing controller
@@ -169,6 +171,7 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
 
     setState(() {
       _isInpainting = true;
+      _lastExecutionTimeMs = null;
     });
 
     try {
@@ -177,10 +180,16 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
           .map((polygon) => polygon.toInpaintingFormat())
           .toList();
 
+      final stopwatch = Stopwatch()..start();
+
       final result = await InpaintingService.instance.inpaint(
         _imageBytes!,
         polygonsData,
+        config: InpaintingConfig(useGpu: _useGpu),
       );
+
+      stopwatch.stop();
+      final executionTime = stopwatch.elapsedMilliseconds;
 
       // Convert ui.Image to Uint8List
       final ByteData? byteData =
@@ -205,12 +214,14 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
         _imageBytes = outputBytes;
         _imageProvider = MemoryImage(outputBytes);
         _isInpainting = false;
+        _lastExecutionTimeMs = executionTime.toDouble();
       });
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
         _isInpainting = false;
+        _lastExecutionTimeMs = null;
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -521,6 +532,18 @@ class _PolygonInpaintingPageState extends State<PolygonInpaintingPage> {
           const Icon(Icons.layers, size: 16),
           const SizedBox(width: 4),
           Text("Selections: ${_polygons.length}/$_maxPolygons"),
+          const Spacer(),
+          if (_lastExecutionTimeMs != null) ...[
+            const Icon(Icons.timer, size: 16),
+            const SizedBox(width: 4),
+            Text("${(_lastExecutionTimeMs! / 1000).toStringAsFixed(1)}s"),
+            const SizedBox(width: 16),
+          ],
+          Switch(
+            value: _useGpu,
+            onChanged: (value) => setState(() => _useGpu = value),
+          ),
+          Text(_useGpu ? 'GPU' : 'CPU'),
         ],
       ),
     );

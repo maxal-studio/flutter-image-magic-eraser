@@ -68,6 +68,28 @@ class ImageProcessingService {
     );
   }
 
+  /// Converts an img.Image to a floating-point tensor
+  ///
+  /// This method converts an image package Image directly to a float tensor,
+  /// avoiding the creation of intermediate ui.Image objects.
+  ///
+  /// - [image]: The img.Image to convert
+  /// - Returns: A list of floating-point values representing the RGB channels
+  Future<List<double>> imageToFloatTensor(img.Image image) async {
+    return TensorProcessor.imageToFloatTensor(image);
+  }
+
+  /// Converts an img.Image mask to a float tensor
+  ///
+  /// This method converts a binary mask image directly to a float tensor,
+  /// ensuring the output is purely black and white (0.0 or 1.0).
+  ///
+  /// - [mask]: The img.Image mask to convert
+  /// - Returns: A list of floating-point values (0.0 or 1.0) representing the binary mask
+  Future<List<double>> imageMaskToFloatTensor(img.Image mask) async {
+    return TensorProcessor.imageMaskToFloatTensor(mask);
+  }
+
   /// Converts an image into a floating-point tensor
   ///
   /// - [image]: The image to convert
@@ -161,6 +183,18 @@ class ImageProcessingService {
       polygon,
       debugTag,
     );
+  }
+
+  /// Crops an image to the specified rectangle
+  ///
+  /// - [image]: The input image to crop
+  /// - [box]: The bounding box of the crop region
+  /// - Returns: A new cropped image
+  Future<ui.Image> cropUIImage(
+    ui.Image image,
+    BoundingBox box,
+  ) async {
+    return CropProcessor.cropUIImage(image, box);
   }
 
   /// Crops an image to the specified dimensions

@@ -34,6 +34,20 @@ Then run:
 flutter pub get
 ```
 
+
+## 📚 Usage
+
+## (Method 1) Initialize from Assets
+
+Before using the inpainting functionality, you need to initialize the ONNX runtime with the LaMa model:
+
+```dart
+import 'package:image_magic_eraser/image_magic_eraser.dart';
+
+// Initialize the service with the model path
+await InpaintingService.instance.initializeOrt('assets/models/lama_fp32.onnx');
+```
+
 ### 📁 Model Setup
 
 1. Download the LaMa model file (`lama_fp32.onnx`) from this url [Carve/LaMa-ONNX](https://huggingface.co/Carve/LaMa-ONNX/tree/main) and place it in your assets folder.
@@ -49,24 +63,12 @@ flutter:
     - assets/models/lama_fp32.onnx
 ```
 
-## 📚 Usage
-
-### Initialize the Service
-
-Before using the inpainting functionality, you need to initialize the ONNX runtime with the LaMa model:
-
-```dart
-import 'package:image_magic_eraser/image_magic_eraser.dart';
-
-// Initialize the service with the model path
-await InpaintingService.instance.initializeOrt('assets/models/lama_fp32.onnx');
-```
-
-### Initialize from URL (Alternative)
+## (Method 2) Initialize from URL
 
 You can also download and initialize the model directly from a URL:
 
 ```dart
+import 'package:image_magic_eraser/image_magic_eraser.dart';
 // Model URL: 
 String modelUrl = 'https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx';
 // SHA-256 checksum for model integrity verification
@@ -102,8 +104,9 @@ InpaintingService.instance.downloadProgressStream.listen((progress) {
 `Strip Style` : `Non-Global Symbols`  
 
 
-
-### Model Loading State Management
+---
+---
+## Model Loading State Management
 
 The package provides a way to track the model loading state, which is particularly useful since model loading can take some time depending on the device. You can listen to state changes and update your UI accordingly:
 
@@ -142,7 +145,34 @@ InpaintingService.instance.modelLoadingStateStream.listen((state) {
 });
 ```
 
-### Method : Inpainting with Polygons 
+
+### (Method 1) : Using the ImageMaskSelector
+
+The package includes an interactive image selector widget that makes it easy for users to select areas to inpaint:
+
+```dart
+// Create a controller for the image selector widget
+final imageSelectorController = ImageSelectorController();
+
+// Set up the widget in your UI
+ImageMaskSelector(
+  controller: imageSelectorController,
+  child: Image.memory(imageBytes),
+),
+
+// When ready to inpaint, get the polygons from the controller
+final polygonsData = imageSelectorController.polygons
+    .map((polygon) => polygon.toInpaintingFormat())
+    .toList();
+
+// Perform inpainting with the drawn polygons
+final result = await InpaintingService.instance.inpaint(
+  imageBytes,
+  polygonsData,
+);
+```
+
+### (Method 2) : Inpainting with Polygons 
 
 Define areas to inpaint using polygons (each polygon is a list of points):
 
@@ -179,32 +209,6 @@ final Uint8List outputBytes = byteData!.buffer.asUint8List();
 
 // Use the result in your UI
 Image.memory(outputBytes)
-```
-
-### Using the ImageMaskSelector
-
-The package includes an interactive image selector widget that makes it easy for users to select areas to inpaint:
-
-```dart
-// Create a controller for the image selector widget
-final imageSelectorController = ImageSelectorController();
-
-// Set up the widget in your UI
-ImageMaskSelector(
-  controller: imageSelectorController,
-  child: Image.memory(imageBytes),
-),
-
-// When ready to inpaint, get the polygons from the controller
-final polygonsData = imageSelectorController.polygons
-    .map((polygon) => polygon.toInpaintingFormat())
-    .toList();
-
-// Perform inpainting with the drawn polygons
-final result = await InpaintingService.instance.inpaint(
-  imageBytes,
-  polygonsData,
-);
 ```
 
 ### Visualizing the Inpainting Process (Debug)
