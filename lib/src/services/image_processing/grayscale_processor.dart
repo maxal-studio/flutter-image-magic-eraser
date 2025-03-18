@@ -8,7 +8,7 @@ import 'models.dart';
 /// Handles grayscale image processing operations
 class GrayscaleProcessor {
   /// Converts an image to grayscale
-  static Future<ui.Image> convertToGrayscale(
+  static Future<ui.Image> convertUIImageToGrayscale(
     ui.Image image, {
     bool blackNWhite = true,
     int threshold = 50,

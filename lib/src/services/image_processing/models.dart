@@ -1,5 +1,56 @@
 import 'dart:typed_data';
 
+import 'package:image/image.dart' as img;
+import 'package:image_magic_eraser/image_magic_eraser.dart';
+
+/// Parameters for image conversion from img.Image to ui.Image
+class ImgToUiParams {
+  final img.Image image;
+
+  ImgToUiParams(this.image);
+}
+
+/// Result class for image conversion
+class ImageConversionResult {
+  final Uint8List bytes;
+  final int width;
+  final int height;
+
+  ImageConversionResult(this.bytes, this.width, this.height);
+}
+
+/// Parameters for image conversion from ui.Image to img.Image
+class UiToImgParams {
+  final Uint8List bytes;
+  final int width;
+  final int height;
+
+  UiToImgParams(this.bytes, this.width, this.height);
+}
+
+/// Parameters for blending a patch into an image
+class BlendImageParams {
+  final img.Image originalImage;
+  final img.Image patch;
+  final BoundingBox box;
+  final List<Map<String, double>> polygon;
+  final String debugTag;
+
+  BlendImageParams(
+      this.originalImage, this.patch, this.box, this.polygon, this.debugTag);
+}
+
+/// Parameters for image cropping
+class CropImageParams {
+  final img.Image image;
+  final int x;
+  final int y;
+  final int width;
+  final int height;
+
+  CropImageParams(this.image, this.x, this.y, this.width, this.height);
+}
+
 /// Parameter class for grayscale conversion
 class GrayscaleParams {
   final Uint8List rgbaBytes;
@@ -13,6 +64,14 @@ class GrayscaleParams {
     required this.blackNWhite,
     required this.threshold,
   });
+}
+
+class MaskImageParams {
+  final List<List<Map<String, double>>> polygons;
+  final int width;
+  final int height;
+
+  MaskImageParams(this.polygons, this.width, this.height);
 }
 
 /// Parameter class for tensor conversion
@@ -61,6 +120,17 @@ class RgbTensorParams {
     required this.width,
     required this.height,
   });
+}
+
+/// Parameters for image resizing
+class ResizeImageParams {
+  final img.Image image;
+  final int targetWidth;
+  final int targetHeight;
+  final bool useBilinear;
+
+  ResizeImageParams(
+      this.image, this.targetWidth, this.targetHeight, this.useBilinear);
 }
 
 /// Parameter class for RGB resizing

@@ -3,30 +3,89 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-
+import 'package:image/image.dart' as img;
 import 'models.dart';
 
 /// Handles image resizing operations
 class ResizeProcessor {
-  /// Resizes the input image to the specified dimensions
-  static Future<ui.Image> resizeImage(
-      ui.Image image, int targetWidth, int targetHeight) async {
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
+  /// Resizes an image to the specified dimensions
+  ///
+  /// - [image]: The input image to resize
+  /// - [targetWidth]: The desired width of the output image
+  /// - [targetHeight]: The desired height of the output image
+  /// - [useBilinear]: Whether to use bilinear interpolation for better quality (default: true)
+  /// - Returns: A new resized image
+  static Future<img.Image> resizeImage(
+    img.Image image,
+    int targetWidth,
+    int targetHeight, {
+    bool useBilinear = true,
+  }) async {
+    return compute(
+      _resizeImageIsolate,
+      ResizeImageParams(image, targetWidth, targetHeight, useBilinear),
+    );
+  }
 
-    // Use a more efficient paint configuration
-    final paint = Paint()
-      ..filterQuality = FilterQuality.medium
-      ..isAntiAlias = false;
+  /// Isolate function for resizing an image
+  static img.Image _resizeImageIsolate(ResizeImageParams params) {
+    if (kDebugMode) {
+      log('Resizing image with dimensions: ${params.image.width}x${params.image.height} to ${params.targetWidth}x${params.targetHeight}',
+          name: 'ImagePackageService');
+    }
+    if (params.useBilinear) {
+      return img.copyResize(
+        params.image,
+        width: params.targetWidth,
+        height: params.targetHeight,
+        interpolation: img.Interpolation.linear,
+      );
+    } else {
+      return img.copyResize(
+        params.image,
+        width: params.targetWidth,
+        height: params.targetHeight,
+        interpolation: img.Interpolation.nearest,
+      );
+    }
+  }
 
-    final srcRect =
-        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
-    final dstRect =
-        Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble());
-    canvas.drawImageRect(image, srcRect, dstRect, paint);
+  /// Efficiently resizes an image to the specified dimensions
+  static Future<ui.Image> resizeUIImage(
+    ui.Image image,
+    int targetWidth,
+    int targetHeight,
+  ) async {
+    try {
+      // Create a picture recorder
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
 
-    final picture = recorder.endRecording();
-    return picture.toImage(targetWidth, targetHeight);
+      // Use a high-quality paint object for better results
+      final paint = Paint()
+        ..filterQuality = FilterQuality.high
+        ..isAntiAlias = true;
+
+      // Draw the image scaled to the target size
+      canvas.drawImageRect(
+        image,
+        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+        Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble()),
+        paint,
+      );
+
+      // Convert to an image
+      final picture = recorder.endRecording();
+      final resizedImage = await picture.toImage(targetWidth, targetHeight);
+
+      return resizedImage;
+    } catch (e) {
+      if (kDebugMode) {
+        log('Error in _safeResizeImage: $e',
+            name: 'PolygonInpaintingService', error: e);
+      }
+      rethrow;
+    }
   }
 
   /// Resizes the RGB output to match the original image dimensions

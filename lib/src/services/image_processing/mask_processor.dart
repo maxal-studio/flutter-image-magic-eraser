@@ -1,25 +1,14 @@
-import 'dart:async';
 import 'dart:developer';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_magic_eraser/src/services/image_processing/models.dart';
+import 'package:image_magic_eraser/src/utils/image_disposal_util.dart';
 
-import '../utils/image_disposal_util.dart';
-
-/// Service for generating masks from polygons
-///
-/// This service provides methods to generate mask images from lists of points
-/// with absolute pixel coordinates.
-class MaskGenerationService {
-  MaskGenerationService._internal();
-
-  static final MaskGenerationService _instance =
-      MaskGenerationService._internal();
-
-  /// Returns the singleton instance of the service
-  static MaskGenerationService get instance => _instance;
-
+/// Handles mask generation operations
+class MaskProcessor {
   /// Generates a mask image from a list of polygons
   ///
   /// [polygons] is a list of lists, each inner list containing points as maps with 'x' and 'y' keys
@@ -29,7 +18,7 @@ class MaskGenerationService {
   /// [backgroundColor] is the color of the background (default: black)
   /// [fillColor] is the color of the filled polygons (default: white)
   /// [drawOutline] determines whether to draw an outline around the polygons (default: false)
-  Future<ui.Image> generateMask(
+  static Future<ui.Image> generateUIImageMask(
     List<List<Map<String, double>>> polygons,
     int width,
     int height, {
@@ -111,7 +100,7 @@ class MaskGenerationService {
   }
 
   /// Converts a mask image to bytes
-  Future<Uint8List> maskImageToBytes(ui.Image maskImage) async {
+  static Future<Uint8List> maskImageToBytes(ui.Image maskImage) async {
     final byteData = await maskImage.toByteData(format: ui.ImageByteFormat.png);
     if (byteData == null) throw Exception("Failed to get mask ByteData");
 
@@ -129,7 +118,7 @@ class MaskGenerationService {
   /// [backgroundColor] is the color of the background (default: transparent)
   /// [fillColor] is the color of the filled polygons (default: red with 50% opacity)
   /// [drawOutline] determines whether to draw an outline around the polygons (default: true)
-  Future<Image> generateDebugMask(
+  static Future<Image> generateDebugMask(
     List<List<Map<String, double>>> polygons,
     int width,
     int height, {
@@ -139,7 +128,7 @@ class MaskGenerationService {
     bool drawOutline = false,
   }) async {
     // Generate the mask image
-    final maskImage = await generateMask(
+    final maskImage = await generateUIImageMask(
       polygons,
       width,
       height,
@@ -162,5 +151,81 @@ class MaskGenerationService {
       height: height.toDouble(),
       fit: BoxFit.contain,
     );
+  }
+
+  /// Generates a mask from polygons using the image package
+  ///
+  /// - [polygons]: List of polygons to draw
+  /// - [width]: Width of the mask
+  /// - [height]: Height of the mask
+  /// - Returns: An img.Image containing the mask
+  static Future<img.Image> generateMaskImage(
+    List<List<Map<String, double>>> polygons,
+    int width,
+    int height,
+  ) async {
+    return compute(
+      _generateMaskImageIsolate,
+      MaskImageParams(polygons, width, height),
+    );
+  }
+
+  /// Isolate function for generating a mask
+  static img.Image _generateMaskImageIsolate(MaskImageParams params) {
+    if (kDebugMode) {
+      log('Generating mask with dimensions: ${params.width}x${params.height}',
+          name: 'ImagePackageService');
+    }
+    final width = params.width;
+    final height = params.height;
+    final polygons = params.polygons;
+
+    if (kDebugMode) {
+      log('Generating mask with dimensions: $width x $height',
+          name: 'ImagePackageService');
+    }
+
+    // Create a new RGBA image with 4 channels
+    final img.Image mask =
+        img.Image(width: width, height: height, numChannels: 4);
+
+    final bgColor = img.ColorRgba8(0, 0, 0, 255); // Pure black
+    final fillColorRgba = img.ColorRgba8(255, 255, 255, 255); // Pure white
+
+    // Fill with background color
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        mask.setPixel(x, y, bgColor);
+      }
+    }
+
+    // Draw each polygon
+    for (final polygon in polygons) {
+      if (polygon.length < 3) {
+        continue;
+      }
+
+      // Convert polygon points to list of points
+      final points = polygon.map((point) {
+        return img.Point(
+          point['x']!.round(),
+          point['y']!.round(),
+        );
+      }).toList();
+
+      // Fill the polygon with the fill color
+      img.fillPolygon(
+        mask,
+        vertices: points,
+        color: fillColorRgba,
+      );
+    }
+
+    // Ensure the image data is properly initialized
+    if (mask.data == null) {
+      throw Exception('Failed to generate mask: image data is null');
+    }
+
+    return mask;
   }
 }

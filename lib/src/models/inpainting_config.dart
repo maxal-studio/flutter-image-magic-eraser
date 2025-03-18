@@ -15,11 +15,15 @@ class InpaintingConfig {
   /// The maximum expansion size in pixels (default: 200)
   final int maxExpansionSize;
 
+  /// Use GPU for image processing
+  final bool useGpu;
+
   /// Creates a new configuration for the inpainting algorithm
   const InpaintingConfig({
     this.inputSize = 512,
     this.expandPercentage = 0.3,
     this.maxExpansionSize = 200,
+    this.useGpu = true,
   });
 
   /// Creates a copy of this configuration with the given fields replaced
@@ -27,17 +31,19 @@ class InpaintingConfig {
     int? inputSize,
     double? expandPercentage,
     int? maxExpansionSize,
+    bool? useGpu,
   }) {
     return InpaintingConfig(
       inputSize: inputSize ?? this.inputSize,
       expandPercentage: expandPercentage ?? this.expandPercentage,
       maxExpansionSize: maxExpansionSize ?? this.maxExpansionSize,
+      useGpu: useGpu ?? this.useGpu,
     );
   }
 
   /// Returns a string representation of the configuration
   @override
   String toString() {
-    return 'InpaintingConfig(inputSize: $inputSize, expandPercentage: $expandPercentage, maxExpansionSize: $maxExpansionSize)';
+    return 'InpaintingConfig(inputSize: $inputSize, expandPercentage: $expandPercentage, maxExpansionSize: $maxExpansionSize, useGpu: $useGpu)';
   }
 }
