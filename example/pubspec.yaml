@@ -57,6 +57,8 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  config:
+    enable-swift-package-manager: true
 
   assets:
     - assets/

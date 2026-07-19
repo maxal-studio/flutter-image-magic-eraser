@@ -21,7 +21,7 @@ screenshots:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_onnxruntime: ^1.8.1
+  flutter_onnxruntime: ^1.8.3
   image: ^4.0.15
   path_provider: ^2.1.5
   image_picker: ^1.1.2
